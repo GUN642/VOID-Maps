@@ -9,10 +9,12 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import app.voidmaps.BuildConfig
+import app.voidmaps.CrashReporter
 import app.voidmaps.VoidMapsApp
 import app.voidmaps.data.AppSettings
 import app.voidmaps.data.BBox
 import app.voidmaps.data.Geo
+import app.voidmaps.data.Hazard
 import app.voidmaps.data.GeoPoint
 import app.voidmaps.data.Place
 import app.voidmaps.data.Release
@@ -83,7 +85,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private var routeJob: Job? = null
 
     /** Hazard or map point tapped by the user. */
-    var tappedHazard by mutableStateOf<app.voidmaps.data.Hazard?>(null)
+    var tappedHazard by mutableStateOf<Hazard?>(null)
 
     // ------------------------------------------------------------------ updates
     var releases by mutableStateOf<List<Release>>(emptyList())
@@ -104,7 +106,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private var lastView: Triple<BBox, GeoPoint, Double>? = null
 
     init {
-        crashReport = app.voidmaps.CrashReporter.pending(app)
+        crashReport = CrashReporter.pending(app)
         viewModelScope.launch {
             // The shared settings flow starts with defaults; read the stored values before deciding.
             val stored = repo.settings.first()

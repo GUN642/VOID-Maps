@@ -1,9 +1,12 @@
 package app.voidmaps.nav
 
 import app.voidmaps.data.BBox
+import app.voidmaps.data.ChargeOperator
 import app.voidmaps.data.GeoPoint
 import app.voidmaps.data.Hazard
 import app.voidmaps.data.Incidents
+import app.voidmaps.data.Poi
+import app.voidmaps.data.Pois
 import app.voidmaps.data.SpeedCameras
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -22,7 +25,12 @@ object HazardRepo {
     private val _cameras = MutableStateFlow<List<Hazard>>(emptyList())
     val cameras: StateFlow<List<Hazard>> = _cameras.asStateFlow()
 
+    private val _chargers = MutableStateFlow<List<Poi>>(emptyList())
+    val chargers: StateFlow<List<Poi>> = _chargers.asStateFlow()
+
     private var lastViewFetch = 0L
+    private var lastChargerFetch = 0L
+    private var lastChargerCenter: GeoPoint? = null
     private var lastViewCenter: GeoPoint? = null
     private var lastCameraFetch = 0L
     private var lastCameraCenter: GeoPoint? = null
@@ -37,6 +45,29 @@ object HazardRepo {
         if (boxes.isEmpty()) return
         val list = withContext(Dispatchers.IO) { runCatching { SpeedCameras.fetch(boxes) }.getOrNull() } ?: return
         _cameras.value = if (replace) list else (list + _cameras.value).distinctBy { it.id }.take(3000)
+    }
+
+    suspend fun loadChargers(boxes: List<BBox>, operators: Set<ChargeOperator>, replace: Boolean) {
+        if (boxes.isEmpty()) return
+        val list = withContext(Dispatchers.IO) { runCatching { Pois.chargers(boxes, operators) }.getOrNull() } ?: return
+        _chargers.value = if (replace) list else (list + _chargers.value).distinctBy { it.id }.take(3000)
+    }
+
+    /** Charging stations around the visible map area (throttled). */
+    suspend fun loadChargersForView(box: BBox, center: GeoPoint, operators: Set<ChargeOperator>, force: Boolean = false) {
+        val now = System.currentTimeMillis()
+        val clamped = if (box.areaKm2 > 6_000) BBox.around(center, 38_000.0) else box
+        val last = lastChargerCenter
+        if (force || last == null || now - lastChargerFetch > 600_000 || app.voidmaps.data.Geo.distance(last, center) > 10_000) {
+            lastChargerFetch = now
+            lastChargerCenter = center
+            loadChargers(listOf(clamped), operators, replace = false)
+        }
+    }
+
+    fun clearChargers() {
+        _chargers.value = emptyList()
+        lastChargerCenter = null
     }
 
     /** Loads hazards around the visible map area, throttled so panning does not burn the API quota. */

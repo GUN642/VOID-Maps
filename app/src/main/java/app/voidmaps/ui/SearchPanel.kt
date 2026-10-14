@@ -51,6 +51,8 @@ import app.voidmaps.data.Format
 import app.voidmaps.data.Geo
 import app.voidmaps.data.GeoPoint
 import app.voidmaps.data.Place
+import app.voidmaps.data.PoiCategory
+import app.voidmaps.nav.Navigator
 import app.voidmaps.nav.LocationTracker
 import app.voidmaps.ui.theme.VoidTheme
 import app.voidmaps.ui.theme.headingStyle
@@ -71,10 +73,11 @@ fun SearchPanel(vm: MainViewModel, settings: AppSettings) {
             ) {
                 if (vm.query.isEmpty()) {
                     Text(
-                        when (vm.pickingFavourite) {
-                            "home" -> "Adresse für Zuhause"
-                            "work" -> "Adresse für Arbeit"
-                            else -> "Adresse, Ort oder Koordinaten"
+                        when (vm.pick) {
+                            Pick.HOME -> "Adresse für Zuhause"
+                            Pick.WORK -> "Adresse für Arbeit"
+                            Pick.STOP -> "Zwischenziel: Adresse oder Ort"
+                            Pick.DESTINATION -> "Adresse, Ort oder Sonderziel"
                         },
                         color = c.textMuted, style = MaterialTheme.typography.bodyLarge,
                     )
@@ -94,24 +97,38 @@ fun SearchPanel(vm: MainViewModel, settings: AppSettings) {
                 IconButton(onClick = { vm.onQuery("") }) { Icon(Icons.Outlined.Close, "Leeren", tint = c.textMuted) }
             }
         }
+        if (vm.pick == Pick.DESTINATION || vm.pick == Pick.STOP) {
+            ChipRow {
+                PoiCategory.entries.forEach { cat ->
+                    Pill(cat.label, selected = vm.category == cat, onClick = { vm.searchCategory(cat) })
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+        }
         if (vm.searching) DotLoader(Modifier.fillMaxWidth().height(10.dp))
+        vm.category?.let { cat ->
+            Label(
+                if (Navigator.isActive()) "${cat.label} entlang der Route" else "${cat.label} in der Nähe",
+                Modifier.padding(start = 20.dp, top = 8.dp, bottom = 4.dp),
+            )
+        }
 
         LazyColumn(Modifier.fillMaxSize()) {
-            if (vm.query.isBlank() && vm.pickingFavourite == null) {
+            if (vm.query.isBlank() && vm.category == null && vm.pick == Pick.DESTINATION) {
                 item {
                     Row(Modifier.padding(horizontal = 20.dp, vertical = 12.dp)) {
                         FavouriteTile("Zuhause", Icons.Outlined.Home, settings.home, Modifier.weight(1f),
                             onGo = { settings.home?.let { vm.choose(it) } },
-                            onSet = { vm.pickingFavourite = "home" })
+                            onSet = { vm.pick = Pick.HOME })
                         Spacer(Modifier.width(12.dp))
                         FavouriteTile("Arbeit", Icons.Outlined.Work, settings.work, Modifier.weight(1f),
                             onGo = { settings.work?.let { vm.choose(it) } },
-                            onSet = { vm.pickingFavourite = "work" })
+                            onSet = { vm.pick = Pick.WORK })
                     }
                 }
                 if (settings.recents.isNotEmpty()) {
-                    item { Label("Zuletzt", Modifier.padding(start = 20.dp, top = 14.dp, bottom = 6.dp)) }
-                    items(settings.recents) { p ->
+                    item { Label("Zuletzt gesucht", Modifier.padding(start = 20.dp, top = 14.dp, bottom = 6.dp)) }
+                    items(settings.recents.take(5)) { p ->
                         PlaceRow(p, Icons.Outlined.History, here, onClick = { vm.choose(p) }, onRemove = { vm.update { removeRecent(p) } })
                     }
                 } else {

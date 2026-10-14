@@ -7,6 +7,8 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
+import android.graphics.Typeface
+import app.voidmaps.data.ChargeOperator
 
 /** Map symbols drawn in code – round, flat, Nothing style. No sprite sheet needed. */
 object MapIcons {
@@ -27,7 +29,43 @@ object MapIcons {
             "hz-weather" to badge(d, Color.parseColor("#3D7BFF"), ring, Color.WHITE, Glyph.DROP),
             "hz-camera" to badge(d, if (p.dark) Color.parseColor("#111111") else Color.parseColor("#1A1A1A"), warn, Color.WHITE, Glyph.CAMERA),
             "dest" to destination(d, Color.parseColor(p.route), ring),
-        )
+            "stop" to stop(d, Color.parseColor(p.route), ring),
+        ) + ChargeOperator.entries.associate { it.icon to charger(d, Color.parseColor(it.color), ring, it.letter) }
+    }
+
+    /** Charging station: operator colour, its letter and a small lightning dot. */
+    private fun charger(d: Float, fill: Int, ring: Int, letter: String): Bitmap {
+        val size = (28 * d).toInt()
+        val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val c = Canvas(bmp)
+        val r = size / 2f
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        paint.color = ring
+        c.drawRoundRect(RectF(0f, 0f, size.toFloat(), size.toFloat()), 8 * d, 8 * d, paint)
+        paint.color = fill
+        c.drawRoundRect(RectF(2 * d, 2 * d, size - 2 * d, size - 2 * d), 6.5f * d, 6.5f * d, paint)
+        paint.color = Color.WHITE
+        paint.textAlign = Paint.Align.CENTER
+        paint.textSize = 15 * d
+        paint.typeface = Typeface.DEFAULT_BOLD
+        c.drawText(letter, r, r - (paint.descent() + paint.ascent()) / 2, paint)
+        return bmp
+    }
+
+    /** Intermediate stop: hollow ring in the route colour. */
+    private fun stop(d: Float, color: Int, ring: Int): Bitmap {
+        val size = (20 * d).toInt()
+        val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val c = Canvas(bmp)
+        val r = size / 2f
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        paint.color = ring
+        c.drawCircle(r, r, r, paint)
+        paint.color = color
+        c.drawCircle(r, r, r - 2 * d, paint)
+        paint.color = ring
+        c.drawCircle(r, r, r - 5 * d, paint)
+        return bmp
     }
 
     private fun badge(d: Float, fill: Int, ring: Int, fg: Int, glyph: Glyph): Bitmap {

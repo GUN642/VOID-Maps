@@ -12,6 +12,7 @@ import app.voidmaps.data.Geo
 import app.voidmaps.data.GeoPoint
 import app.voidmaps.data.Hazard
 import app.voidmaps.data.HazardType
+import app.voidmaps.data.Maneuver
 import app.voidmaps.data.ManeuverKind
 import app.voidmaps.data.Place
 import app.voidmaps.data.Route
@@ -19,6 +20,7 @@ import app.voidmaps.data.RouteOptions
 import app.voidmaps.data.Routing
 import app.voidmaps.data.RoutingEngine
 import app.voidmaps.data.Snap
+import app.voidmaps.data.VoiceMode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -36,10 +38,15 @@ data class RouteHazard(val hazard: Hazard, val along: Double)
 
 data class Warning(val hazard: Hazard, val distance: Double)
 
+/** A clearly faster route found in traffic, waiting for the driver to accept or decline it. */
+data class FasterRoute(val route: Route, val savedSeconds: Double, val offeredAt: Long)
+
 data class NavState(
     val destination: Place,
+    /** Intermediate stops still ahead, in driving order. */
+    val stops: List<Place>,
     val route: Route,
-    /** Bumps whenever the route was replaced (reroute, faster route). */
+    /** Bumps whenever the route was replaced (reroute, faster route, new stop). */
     val routeVersion: Int,
     val snap: Snap?,
     /** Index into route.maneuvers of the next manoeuvre. */
@@ -53,15 +60,21 @@ data class NavState(
     val arrived: Boolean = false,
     val warning: Warning? = null,
     val routeHazards: List<RouteHazard> = emptyList(),
+    val faster: FasterRoute? = null,
+    /** Metres to the next intermediate stop, if there is one. */
+    val nextStopDistance: Double? = null,
 ) {
     val eta: Long get() = System.currentTimeMillis() + (remainingTime * 1000).toLong()
 }
 
 /**
  * Turn-by-turn guidance: follows the GPS position along the route, announces manoeuvres and
- * hazards, recalculates when the driver leaves the route and looks for faster routes in traffic.
+ * hazards, handles intermediate stops, recalculates when the driver leaves the route and offers
+ * faster routes in traffic.
  */
 object Navigator {
+    private enum class Say { GUIDE, WARN, INFO }
+
     private val _state = MutableStateFlow<NavState?>(null)
     val state: StateFlow<NavState?> = _state.asStateFlow()
 
@@ -76,33 +89,47 @@ object Navigator {
     private var offRouteCount = 0
     private var lastReroute = 0L
     private var lastFasterCheck = 0L
+    private var fasterDeclinedUntil = 0L
     private var arrivedAt = 0L
 
+    /** Stops the current route was calculated with, and how many of them are already behind us. */
+    private var routeStops: List<Place> = emptyList()
+    private var passedStops = 0
+
     private val settings: AppSettings get() = VoidMapsApp.settings.value
+    private val short: Boolean get() = settings.shortAnnouncements
 
     fun isActive() = _state.value != null
 
-    fun start(context: Context, destination: Place, route: Route) {
+    fun start(context: Context, destination: Place, stops: List<Place>, route: Route) {
         val app = context.applicationContext
         appContext = app
         if (speaker == null) speaker = Speaker(app)
         reset()
+        routeStops = stops
+        passedStops = 0
+        val first = firstRealManeuver(route)
         _state.value = NavState(
             destination = destination,
+            stops = stops,
             route = route,
             routeVersion = 0,
             snap = null,
-            next = firstRealManeuver(route),
-            distanceToNext = route.maneuverAlong.getOrElse(firstRealManeuver(route)) { route.distance },
+            next = first,
+            distanceToNext = route.maneuverAlong.getOrElse(first) { route.distance },
             remainingDistance = route.distance,
             remainingTime = route.duration,
             speedKmh = 0,
         )
         lastFasterCheck = System.currentTimeMillis()
-        ContextCompat.startForegroundService(app, Intent(app, NavigationService::class.java))
+        // May be refused when started from Android Auto with the phone app in the background;
+        // guidance then still runs while the car session keeps the app alive.
+        runCatching { ContextCompat.startForegroundService(app, Intent(app, NavigationService::class.java)) }
+        val arrival = Format.clock(System.currentTimeMillis() + (route.duration * 1000).toLong())
         say(
-            "Die Route wird gestartet. ${spokenDuration(route.duration)}, Ankunft um ${Format.clock(System.currentTimeMillis() + (route.duration * 1000).toLong())} Uhr.",
-            interrupt = true,
+            if (short) "Route gestartet. Ankunft $arrival."
+            else "Die Route wird gestartet. ${spokenDuration(route.duration)}, Ankunft um $arrival Uhr.",
+            Say.INFO, interrupt = true,
         )
         locationJob?.cancel()
         locationJob = VoidMapsApp.scope.launch {
@@ -137,9 +164,37 @@ object Navigator {
         appContext?.let { it.stopService(Intent(it, NavigationService::class.java)) }
     }
 
-    /** Mutes or re-enables voice immediately. */
-    fun onVoiceChanged(enabled: Boolean) {
-        if (!enabled) speaker?.stop()
+    /** Applies a new voice mode immediately (silences running speech when muted). */
+    fun onVoiceModeChanged(mode: VoiceMode) {
+        if (mode != VoiceMode.ALL) speaker?.stop()
+    }
+
+    /** Adds an intermediate stop before the destination and recalculates from the current position. */
+    fun addStop(place: Place) {
+        val s = _state.value ?: return
+        val loc = LocationTracker.location.value ?: return
+        val stops = s.stops + place
+        recalculate(GeoPoint(loc.latitude, loc.longitude), heading(loc), stops, announce = false)
+        say(if (short) "Zwischenziel hinzugefügt." else "Zwischenziel ${place.name} wurde hinzugefügt.", Say.INFO)
+    }
+
+    /** Removes an intermediate stop and recalculates. */
+    fun removeStop(place: Place) {
+        val s = _state.value ?: return
+        val loc = LocationTracker.location.value ?: return
+        recalculate(GeoPoint(loc.latitude, loc.longitude), heading(loc), s.stops - place, announce = false)
+    }
+
+    fun acceptFaster() {
+        val s = _state.value ?: return
+        val f = s.faster ?: return
+        replaceRoute(s.copy(faster = null), f.route, s.stops)
+        say(if (short) "Neue Route." else "Die schnellere Route wird verwendet.", Say.INFO, interrupt = true)
+    }
+
+    fun declineFaster() {
+        fasterDeclinedUntil = System.currentTimeMillis() + 10 * 60_000L
+        _state.value = _state.value?.copy(faster = null)
     }
 
     private fun reset() {
@@ -148,6 +203,7 @@ object Navigator {
         offRouteCount = 0
         lastReroute = 0L
         arrivedAt = 0L
+        fasterDeclinedUntil = 0L
     }
 
     private fun firstRealManeuver(route: Route): Int {
@@ -155,9 +211,16 @@ object Navigator {
         return if (i < 0) 0 else i
     }
 
-    private fun say(text: String, interrupt: Boolean = false) {
-        if (settings.voice) speaker?.speak(text, interrupt)
+    private fun say(text: String, kind: Say, interrupt: Boolean = false) {
+        val allowed = when (settings.voiceMode) {
+            VoiceMode.OFF -> false
+            VoiceMode.WARNINGS -> kind == Say.WARN
+            VoiceMode.ALL -> true
+        }
+        if (allowed) speaker?.speak(text, interrupt)
     }
+
+    private fun heading(loc: Location): Double? = if (loc.hasBearing() && loc.speed > 2) loc.bearing.toDouble() else null
 
     // ------------------------------------------------------------------ position updates
 
@@ -177,22 +240,37 @@ object Navigator {
         if (snap.offset > tolerance) offRouteCount++ else offRouteCount = 0
         val offRoute = offRouteCount >= 3
         if (offRoute && !s.rerouting && System.currentTimeMillis() - lastReroute > 12_000) {
-            reroute(p, if (loc.hasBearing() && speed > 2) loc.bearing.toDouble() else null, announce = true)
+            recalculate(p, heading(loc), s.stops, announce = true)
         }
 
         val along = snap.along
+
+        // Intermediate stops passed?
+        var stopsLeft = s.stops
+        val wpAlong = route.waypointAlong
+        while (passedStops < wpAlong.size && passedStops < routeStops.size && along >= wpAlong[passedStops] - 30) {
+            val reached = routeStops[passedStops]
+            passedStops++
+            stopsLeft = routeStops.drop(passedStops)
+            say(if (short) "Zwischenziel erreicht." else "Sie haben Ihr Zwischenziel ${reached.name} erreicht.", Say.INFO, interrupt = true)
+        }
+        val nextStopDistance = wpAlong.getOrNull(passedStops)?.let { (it - along).coerceAtLeast(0.0) }
+
         var next = s.next
         while (next < route.maneuvers.size - 1 && route.maneuverAlong[next] < along + 3) next++
-        // Never fall back to the departure manoeuvre.
+        // Never fall back to a departure manoeuvre.
         if (route.maneuvers.getOrNull(next)?.kind == ManeuverKind.DEPART && next + 1 < route.maneuvers.size) next++
         val distToNext = (route.maneuverAlong.getOrElse(next) { route.distance } - along).coerceAtLeast(0.0)
         val remaining = (route.distance - along).coerceAtLeast(0.0)
         val destDist = Geo.distance(p, s.destination.point)
-        val arrived = remaining < 25 || (destDist < 30 && remaining < 150)
+        val arrived = stopsLeft.isEmpty() && (remaining < 25 || (destDist < 30 && remaining < 150))
 
         val warning = currentWarning(s.routeHazards, along)
+        // An unanswered offer disappears after half a minute.
+        val faster = s.faster?.takeIf { System.currentTimeMillis() - it.offeredAt < 30_000 }
 
         val updated = s.copy(
+            stops = stopsLeft,
             snap = snap,
             next = next,
             distanceToNext = distToNext,
@@ -202,12 +280,14 @@ object Navigator {
             offRoute = offRoute,
             arrived = arrived,
             warning = warning,
+            faster = faster,
+            nextStopDistance = nextStopDistance,
         )
         _state.value = updated
 
         if (arrived) {
             arrivedAt = System.currentTimeMillis()
-            say("Sie haben Ihr Ziel erreicht.", interrupt = true)
+            say(if (short) "Ziel erreicht." else "Sie haben Ihr Ziel erreicht.", Say.INFO, interrupt = true)
             return
         }
         if (!offRoute) {
@@ -222,6 +302,9 @@ object Navigator {
         val m = route.maneuvers.getOrNull(s.next) ?: return
         // "Continue on …" only marks a name change – not worth interrupting the music for.
         if (m.kind == ManeuverKind.STRAIGHT) return
+        // Intermediate stops are announced when reached.
+        val isLast = s.next == route.maneuvers.size - 1
+        if (m.kind == ManeuverKind.ARRIVE && !isLast) return
         val d = s.distanceToNext
         val done = spoken[s.next] ?: 0
         val fast = speed > 22 // ~80 km/h
@@ -231,35 +314,77 @@ object Navigator {
             speed > 12 -> 500.0
             else -> 250.0
         }
-        val farDist = if (fast) 2000.0 else Double.MAX_VALUE
+        val farDist = if (fast && !short) 2000.0 else Double.MAX_VALUE
 
         fun mark(bits: Int) {
             spoken[s.next] = done or bits
         }
 
-        val phrase = if (m.kind == ManeuverKind.ARRIVE) "erreichen Sie Ihr Ziel" else lowerFirst(m.spoken)
         when {
             done and 4 == 0 && d <= nowDist -> {
-                var text = if (m.kind == ManeuverKind.ARRIVE) "Sie erreichen jetzt Ihr Ziel" else "Jetzt ${lowerFirst(m.spoken)}"
+                mark(7)
+                if (m.kind == ManeuverKind.ARRIVE) return
+                var text = "Jetzt ${phrase(m)}"
                 // Manoeuvres close behind each other are announced together.
                 val after = route.maneuvers.getOrNull(s.next + 1)
-                if (after != null && after.kind != ManeuverKind.ARRIVE &&
+                if (after != null && after.kind != ManeuverKind.ARRIVE && after.kind != ManeuverKind.STRAIGHT &&
                     route.maneuverAlong[s.next + 1] - route.maneuverAlong[s.next] < 150
                 ) {
-                    text += ", danach ${lowerFirst(after.spoken)}"
+                    text += if (short) ", dann ${phrase(after)}" else ", danach ${phrase(after)}"
                 }
-                mark(7)
-                say("$text.")
+                say("$text.", Say.GUIDE)
             }
             done and 2 == 0 && d <= midDist && d > nowDist * 1.6 -> {
                 mark(3)
-                say("In ${Format.spokenDistance(d)} $phrase.")
+                say(
+                    if (m.kind == ManeuverKind.ARRIVE) {
+                        if (short) "Ziel in ${Format.spokenDistance(d)}." else "In ${Format.spokenDistance(d)} erreichen Sie Ihr Ziel."
+                    } else {
+                        "In ${Format.spokenDistance(d)} ${phrase(m)}."
+                    },
+                    Say.GUIDE,
+                )
             }
             done and 1 == 0 && d <= farDist && d > midDist * 1.4 && fast && d > 1500 -> {
                 mark(1)
-                say("In ${Format.spokenDistance(d)} $phrase.")
+                if (m.kind != ManeuverKind.ARRIVE) say("In ${Format.spokenDistance(d)} ${phrase(m)}.", Say.GUIDE)
             }
         }
+    }
+
+    /** The manoeuvre in the form that follows "In 300 Metern …" or "Jetzt …". */
+    private fun phrase(m: Maneuver): String = if (short) shortPhrase(m) else lowerFirst(m.spoken)
+
+    private fun shortPhrase(m: Maneuver): String = when (m.kind) {
+        ManeuverKind.RIGHT -> "rechts abbiegen"
+        ManeuverKind.LEFT -> "links abbiegen"
+        ManeuverKind.SLIGHT_RIGHT -> "leicht rechts"
+        ManeuverKind.SLIGHT_LEFT -> "leicht links"
+        ManeuverKind.SHARP_RIGHT -> "scharf rechts"
+        ManeuverKind.SHARP_LEFT -> "scharf links"
+        ManeuverKind.KEEP_RIGHT -> "rechts halten"
+        ManeuverKind.KEEP_LEFT -> "links halten"
+        ManeuverKind.EXIT_RIGHT -> "Ausfahrt rechts nehmen"
+        ManeuverKind.EXIT_LEFT -> "Ausfahrt links nehmen"
+        ManeuverKind.UTURN -> "wenden"
+        ManeuverKind.MERGE -> "auffahren"
+        ManeuverKind.ROUNDABOUT -> m.exit?.let { "im Kreisverkehr die ${ordinal(it)} Ausfahrt" } ?: "in den Kreisverkehr"
+        ManeuverKind.FERRY -> "auf die Fähre"
+        ManeuverKind.ARRIVE -> "Ziel erreichen"
+        ManeuverKind.DEPART -> "losfahren"
+        ManeuverKind.STRAIGHT -> "geradeaus"
+    }
+
+    private fun ordinal(n: Int) = when (n) {
+        1 -> "erste"
+        2 -> "zweite"
+        3 -> "dritte"
+        4 -> "vierte"
+        5 -> "fünfte"
+        6 -> "sechste"
+        7 -> "siebte"
+        8 -> "achte"
+        else -> "$n."
     }
 
     private fun currentWarning(hazards: List<RouteHazard>, along: Double): Warning? {
@@ -283,35 +408,45 @@ object Navigator {
         }
         if (w.distance > limit) return
         spokenHazards += w.hazard.id
-        val extra = if (camera && w.hazard.maxSpeed != null) ", ${w.hazard.maxSpeed} Kilometer pro Stunde" else ""
-        say("Achtung, in ${Format.spokenDistance(w.distance)} ${w.hazard.type.spoken}$extra.")
+        val dist = Format.spokenDistance(w.distance)
+        if (short) {
+            val extra = if (camera && w.hazard.maxSpeed != null) ", ${w.hazard.maxSpeed}" else ""
+            say("${w.hazard.type.label} in $dist$extra.", Say.WARN)
+        } else {
+            val extra = if (camera && w.hazard.maxSpeed != null) ", ${w.hazard.maxSpeed} Kilometer pro Stunde" else ""
+            say("Achtung, in $dist ${w.hazard.type.spoken}$extra.", Say.WARN)
+        }
     }
 
     // ------------------------------------------------------------------ routing
 
     private fun options(heading: Double?) = RouteOptions(settings.avoidTolls, settings.avoidMotorways, heading)
 
-    private fun reroute(from: GeoPoint, heading: Double?, announce: Boolean) {
+    private fun recalculate(from: GeoPoint, heading: Double?, stops: List<Place>, announce: Boolean) {
         val s = _state.value ?: return
         lastReroute = System.currentTimeMillis()
         _state.value = s.copy(rerouting = true)
-        if (announce) say("Route wird neu berechnet.", interrupt = true)
+        if (announce) say(if (short) "Neue Route." else "Route wird neu berechnet.", Say.GUIDE, interrupt = true)
         VoidMapsApp.scope.launch {
             val st = settings
+            val points = listOf(from) + stops.map { it.point } + s.destination.point
             val result = withContext(Dispatchers.IO) {
-                runCatching { Routing.route(from, s.destination.point, st.routing, st.tomtomKey, options(heading)) }
+                runCatching { Routing.route(points, st.routing, st.tomtomKey, options(heading)) }
             }
             val cur = _state.value ?: return@launch
-            result.onSuccess { r -> replaceRoute(cur, r) }
+            result.onSuccess { r -> replaceRoute(cur, r, stops) }
                 .onFailure { _state.value = cur.copy(rerouting = false) }
         }
     }
 
-    private fun replaceRoute(cur: NavState, r: Route) {
+    private fun replaceRoute(cur: NavState, r: Route, stops: List<Place>) {
         spoken.clear()
         offRouteCount = 0
+        routeStops = stops
+        passedStops = 0
         val first = firstRealManeuver(r)
         _state.value = cur.copy(
+            stops = stops,
             route = r,
             routeVersion = cur.routeVersion + 1,
             snap = null,
@@ -321,29 +456,34 @@ object Navigator {
             remainingTime = r.duration,
             offRoute = false,
             rerouting = false,
+            faster = null,
             routeHazards = projectHazards(r, HazardRepo.incidents.value + if (settings.speedCameras) HazardRepo.cameras.value else emptyList()),
         )
         VoidMapsApp.scope.launch { refreshHazards() }
     }
 
-    /** With live traffic (TomTom) check every 5 minutes whether a clearly faster route exists. */
+    /** With live traffic (TomTom) check every 3 minutes whether a clearly faster route exists, then offer it. */
     private fun maybeLookForFasterRoute(p: GeoPoint, loc: Location) {
         val st = settings
         val s = _state.value ?: return
-        if (st.tomtomKey.isBlank() || st.routing == RoutingEngine.VALHALLA || s.rerouting) return
+        if (st.tomtomKey.isBlank() || st.routing == RoutingEngine.VALHALLA || s.rerouting || s.faster != null) return
         val now = System.currentTimeMillis()
-        if (now - lastFasterCheck < 5 * 60_000L || s.remainingDistance < 3000) return
+        if (now - lastFasterCheck < 3 * 60_000L || now < fasterDeclinedUntil || s.remainingDistance < 3000) return
         lastFasterCheck = now
-        val heading = if (loc.hasBearing()) loc.bearing.toDouble() else null
+        val points = listOf(p) + s.stops.map { it.point } + s.destination.point
         VoidMapsApp.scope.launch {
             val r = withContext(Dispatchers.IO) {
-                runCatching { Routing.tomtom(p, s.destination.point, st.tomtomKey, options(heading)) }.getOrNull()
+                runCatching { Routing.tomtom(points, st.tomtomKey, options(heading(loc))).firstOrNull() }.getOrNull()
             } ?: return@launch
             val cur = _state.value ?: return@launch
             val saved = cur.remainingTime - r.duration
-            if (saved > maxOf(180.0, cur.remainingTime * 0.08)) {
-                replaceRoute(cur, r)
-                say("Schnellere Route gefunden. Sie sparen ${(saved / 60).roundToInt()} Minuten.")
+            if (saved > maxOf(120.0, cur.remainingTime * 0.05) && !r.similarTo(cur.route)) {
+                _state.value = cur.copy(faster = FasterRoute(r, saved, System.currentTimeMillis()))
+                val min = (saved / 60).roundToInt()
+                say(
+                    if (short) "Schnellere Route, $min Minuten." else "Eine schnellere Route ist verfügbar. Sie sparen $min Minuten.",
+                    Say.INFO,
+                )
             }
         }
     }
@@ -361,6 +501,10 @@ object Navigator {
         if (st.speedCameras) {
             val boxes = withContext(Dispatchers.Default) { BBox.chunks(rest, 2_500.0, 300.0, limit = 40) }
             HazardRepo.loadCameras(boxes, replace = false)
+        }
+        if (st.chargers) {
+            val boxes = withContext(Dispatchers.Default) { BBox.chunks(rest, 2_500.0, 2_000.0, limit = 40) }
+            HazardRepo.loadChargers(boxes, st.chargerOperators, replace = false)
         }
     }
 

@@ -195,3 +195,22 @@ fun Toggle(title: String, subtitle: String?, checked: Boolean, onChange: (Boolea
         )
     }
 }
+
+/** Ring of dots filling clockwise with [progress] (Nothing Glyph style). */
+@Composable
+fun DotRing(progress: Float, modifier: Modifier = Modifier, color: Color = VoidTheme.colors.accent, dots: Int = 20) {
+    Canvas(modifier) {
+        val radius = min(size.width, size.height) / 2f
+        val dotR = radius * 0.11f
+        val ringR = radius - dotR
+        val filled = (progress.coerceIn(0f, 1f) * dots).toInt()
+        for (i in 0 until dots) {
+            val angle = -Math.PI / 2 + 2 * Math.PI * i / dots
+            drawCircle(
+                if (i < filled) color else color.copy(alpha = 0.3f),
+                dotR,
+                Offset(center.x + (ringR * kotlin.math.cos(angle)).toFloat(), center.y + (ringR * kotlin.math.sin(angle)).toFloat()),
+            )
+        }
+    }
+}

@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
@@ -14,9 +15,13 @@ import app.voidmaps.VoidMapsApp
 import app.voidmaps.data.AppSettings
 import app.voidmaps.data.BBox
 import app.voidmaps.data.Geo
-import app.voidmaps.data.Hazard
 import app.voidmaps.data.GeoPoint
+import app.voidmaps.data.Hazard
+import app.voidmaps.data.NavView
 import app.voidmaps.data.Place
+import app.voidmaps.data.Poi
+import app.voidmaps.data.PoiCategory
+import app.voidmaps.data.Pois
 import app.voidmaps.data.Release
 import app.voidmaps.data.Route
 import app.voidmaps.data.RouteOptions
@@ -24,6 +29,8 @@ import app.voidmaps.data.Routing
 import app.voidmaps.data.Search
 import app.voidmaps.data.SettingsRepository
 import app.voidmaps.data.Updater
+import app.voidmaps.data.VoiceMode
+import app.voidmaps.map.OfflineMaps
 import app.voidmaps.nav.HazardRepo
 import app.voidmaps.nav.LocationTracker
 import app.voidmaps.nav.Navigator
@@ -39,7 +46,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 
-enum class Mode { BROWSE, SEARCH, PREVIEW, NAVIGATE }
+enum class Mode { BROWSE, SEARCH, PREVIEW, NAVIGATE, OFFLINE_SELECT }
+
+/** What a place chosen in the search is used for. */
+enum class Pick { DESTINATION, HOME, WORK, STOP }
 
 sealed interface UiEvent {
     data class Toast(val text: String) : UiEvent
@@ -68,24 +78,40 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var searchError by mutableStateOf<String?>(null)
         private set
+    var category by mutableStateOf<PoiCategory?>(null)
+        private set
     private var searchJob: Job? = null
 
-    /** Which favourite slot the next chosen search result is saved to. */
-    var pickingFavourite by mutableStateOf<String?>(null)
+    var pick by mutableStateOf(Pick.DESTINATION)
 
-    // ------------------------------------------------------------------ destination / route
+    /** Place chosen while navigating – asks "Zwischenziel or new destination". */
+    var pendingChoice by mutableStateOf<Place?>(null)
+
+    // ------------------------------------------------------------------ destination / routes
     var destination by mutableStateOf<Place?>(null)
         private set
-    var preview by mutableStateOf<Route?>(null)
+    var stops by mutableStateOf<List<Place>>(emptyList())
         private set
+    var routes by mutableStateOf<List<Route>>(emptyList())
+        private set
+    var selectedRoute by mutableStateOf(0)
+        private set
+    val preview: Route? get() = routes.getOrNull(selectedRoute)
     var routing by mutableStateOf(false)
         private set
     var routeError by mutableStateOf<String?>(null)
         private set
     private var routeJob: Job? = null
 
-    /** Hazard or map point tapped by the user. */
+    /** Time when the selected route starts by itself (5 s without any input). 0 = no countdown. */
+    var autoStartAt by mutableLongStateOf(0L)
+        private set
+
     var tappedHazard by mutableStateOf<Hazard?>(null)
+    var tappedPoi by mutableStateOf<Poi?>(null)
+
+    // ------------------------------------------------------------------ offline selection
+    var offlineBounds by mutableStateOf<BBox?>(null)
 
     // ------------------------------------------------------------------ updates
     var releases by mutableStateOf<List<Release>>(emptyList())
@@ -118,14 +144,26 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 if (st == null && mode == Mode.NAVIGATE) {
                     mode = Mode.BROWSE
                     destination = null
-                    preview = null
+                    stops = emptyList()
+                    routes = emptyList()
                     following = true
-                } else if (st != null && mode != Mode.NAVIGATE) {
+                } else if (st != null && mode != Mode.NAVIGATE && mode != Mode.SEARCH) {
                     mode = Mode.NAVIGATE
                     destination = st.destination
                 }
             }
         }
+        // Auto start: the selected route begins after 5 seconds without input.
+        viewModelScope.launch {
+            while (true) {
+                delay(250)
+                val at = autoStartAt
+                if (at > 0 && mode == Mode.PREVIEW && !routing && preview != null && System.currentTimeMillis() >= at) {
+                    startNavigation()
+                }
+            }
+        }
+        OfflineMaps.refresh(app)
     }
 
     fun toast(text: String) {
@@ -138,23 +176,38 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun myPosition(): GeoPoint? = LocationTracker.location.value?.let { GeoPoint(it.latitude, it.longitude) }
 
+    /** Any touch in the route preview restarts the 5 second countdown. */
+    fun onUserInput() {
+        if (autoStartAt > 0) autoStartAt = System.currentTimeMillis() + AUTO_START_MS
+    }
+
     // ------------------------------------------------------------------ search
 
-    fun openSearch() {
+    fun openSearch(purpose: Pick = Pick.DESTINATION) {
+        pick = purpose
+        autoStartAt = 0
         mode = Mode.SEARCH
     }
 
     fun closeSearch() {
         searchJob?.cancel()
-        pickingFavourite = null
+        pick = Pick.DESTINATION
         query = ""
         results = emptyList()
         searchError = null
-        mode = if (destination != null) Mode.PREVIEW else Mode.BROWSE
+        category = null
+        searching = false
+        mode = when {
+            Navigator.isActive() -> Mode.NAVIGATE
+            destination != null -> Mode.PREVIEW
+            else -> Mode.BROWSE
+        }
+        if (mode == Mode.PREVIEW && routes.isNotEmpty()) autoStartAt = System.currentTimeMillis() + AUTO_START_MS
     }
 
     fun onQuery(q: String) {
         query = q
+        category = null
         searchJob?.cancel()
         searchError = null
         if (q.trim().length < 2) {
@@ -162,51 +215,127 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             searching = false
             return
         }
+        // Instant hits from favourites and recent places while the online search runs.
+        val s = settings.value
+        val local = (listOfNotNull(s.home, s.work) + s.recents).filter {
+            it.name.contains(q.trim(), ignoreCase = true) || it.detail.contains(q.trim(), ignoreCase = true)
+        }.distinct()
+        results = local
         searchJob = viewModelScope.launch {
-            delay(350)
+            delay(220)
             searching = true
             val near = myPosition() ?: lastView?.second
-            val r = withContext(Dispatchers.IO) { runCatching { Search.search(q, near) } }
+            val r = withContext(Dispatchers.IO) { runCatching { Search.search(q, near, s.tomtomKey) } }
             searching = false
             r.onSuccess { list ->
-                val here = near
-                results = if (here == null) list else list.sortedBy { p ->
-                    // Keep Photon's relevance order but pull very close matches up.
-                    val d = Geo.distance(here, p.point)
-                    if (d < 30_000) 0 else 1
+                val online = if (near == null) list else list.sortedBy { p -> if (Geo.distance(near, p.point) < 30_000) 0 else 1 }
+                results = (local + online).distinctBy { it.name + "|" + it.detail }
+                if (results.isEmpty()) searchError = "Nichts gefunden"
+            }.onFailure { if (local.isEmpty()) searchError = "Suche nicht erreichbar – Internetverbindung prüfen" }
+        }
+    }
+
+    /** Sonderziele: places of a category nearby, or along the route while navigating. */
+    fun searchCategory(c: PoiCategory) {
+        searchJob?.cancel()
+        query = ""
+        category = c
+        searchError = null
+        results = emptyList()
+        val nav = Navigator.state.value
+        val center = myPosition() ?: lastView?.second ?: return run { searchError = "Kein Standort" }
+        searchJob = viewModelScope.launch {
+            searching = true
+            val path = nav?.let { n ->
+                val rest = n.snap?.let { n.route.line.remainder(it.segment, it.point) } ?: n.route.points
+                // Next ~50 km of the route, one point per kilometre.
+                val out = ArrayList<GeoPoint>()
+                var acc = 0.0
+                var last: GeoPoint? = null
+                for (p in rest) {
+                    val l = last
+                    if (l != null) acc += Geo.distance(l, p)
+                    if (l == null || out.isEmpty() || Geo.distance(out.last(), p) > 1000) out += p
+                    last = p
+                    if (acc > 50_000) break
                 }
-                if (list.isEmpty()) searchError = "Nichts gefunden"
-            }.onFailure { searchError = "Suche nicht erreichbar – Internetverbindung prüfen" }
+                out.takeIf { it.size >= 2 }
+            }
+            val r = withContext(Dispatchers.IO) { runCatching { Pois.category(c, center, 10_000, path) } }
+            searching = false
+            r.onSuccess { list ->
+                results = list.map { it.toPlace() }
+                if (list.isEmpty()) searchError = if (path != null) "Nichts entlang der Route gefunden" else "Nichts in der Nähe gefunden"
+            }.onFailure { searchError = "Sonderziele nicht erreichbar – Internetverbindung prüfen" }
         }
     }
 
     fun choose(place: Place) {
-        val fav = pickingFavourite
-        if (fav != null) {
-            update { if (fav == "home") setHome(place) else setWork(place) }
-            toast(if (fav == "home") "Zuhause gespeichert" else "Arbeit gespeichert")
-            pickingFavourite = null
-            closeSearch()
-            return
+        when (pick) {
+            Pick.HOME, Pick.WORK -> {
+                val home = pick == Pick.HOME
+                update { if (home) setHome(place) else setWork(place) }
+                toast(if (home) "Zuhause gespeichert" else "Arbeit gespeichert")
+                closeSearch()
+                return
+            }
+            Pick.STOP -> {
+                update { addRecent(place) }
+                if (Navigator.isActive()) {
+                    Navigator.addStop(place)
+                    closeSearch()
+                } else {
+                    stops = stops + place
+                    closeSearch()
+                    computeRoute()
+                }
+                return
+            }
+            Pick.DESTINATION -> {}
         }
         searchJob?.cancel()
+        update { addRecent(place) }
+        if (Navigator.isActive()) {
+            pendingChoice = place
+            return
+        }
         query = ""
         results = emptyList()
-        update { addRecent(place) }
+        category = null
         goTo(place)
+    }
+
+    /** Answer to the "Zwischenziel or new destination" question while navigating. */
+    fun resolvePending(asStop: Boolean) {
+        val place = pendingChoice ?: return
+        pendingChoice = null
+        if (asStop) {
+            Navigator.addStop(place)
+            closeSearch()
+        } else {
+            Navigator.stop()
+            closeSearch()
+            goTo(place)
+        }
     }
 
     fun goTo(place: Place) {
         destination = place
-        preview = null
+        stops = emptyList()
+        routes = emptyList()
         routeError = null
         mode = Mode.PREVIEW
         following = false
         computeRoute()
     }
 
+    fun removeStop(place: Place) {
+        stops = stops - place
+        computeRoute()
+    }
+
     fun onMapLongPress(p: GeoPoint) {
-        if (mode == Mode.NAVIGATE) return
+        if (mode == Mode.NAVIGATE || mode == Mode.OFFLINE_SELECT) return
         viewModelScope.launch {
             val place = withContext(Dispatchers.IO) { Search.reverse(p) }
                 ?: Place("Markierter Ort", "%.5f, %.5f".format(java.util.Locale.US, p.lat, p.lon), p)
@@ -217,6 +346,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun computeRoute() {
         val dest = destination ?: return
         routeJob?.cancel()
+        autoStartAt = 0
         val from = myPosition()
         if (from == null) {
             routeError = "Kein GPS-Signal – Standort aktivieren und kurz warten"
@@ -228,12 +358,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         routeJob = viewModelScope.launch {
             val s = settings.value
             val heading = LocationTracker.location.value?.takeIf { it.hasBearing() && it.speed > 2 }?.bearing?.toDouble()
+            val points = listOf(from) + stops.map { it.point } + dest.point
             val r = withContext(Dispatchers.IO) {
-                runCatching { Routing.route(from, dest.point, s.routing, s.tomtomKey, RouteOptions(s.avoidTolls, s.avoidMotorways, heading)) }
+                runCatching {
+                    Routing.routes(points, s.routing, s.tomtomKey, RouteOptions(s.avoidTolls, s.avoidMotorways, heading), alternatives = 2)
+                }
             }
             routing = false
-            r.onSuccess { preview = it }
-                .onFailure { routeError = it.message ?: "Route konnte nicht berechnet werden" }
+            r.onSuccess {
+                routes = it.take(3)
+                selectedRoute = 0
+                if (routes.isNotEmpty() && mode == Mode.PREVIEW) autoStartAt = System.currentTimeMillis() + AUTO_START_MS
+            }.onFailure { routeError = it.message ?: "Route konnte nicht berechnet werden" }
             // Warnings along the route are shown already in the preview.
             preview?.let { route ->
                 if (s.tomtomKey.isNotBlank()) HazardRepo.loadIncidents(s.tomtomKey, BBox.chunks(route.points, 9_000.0, 500.0, 20), replace = false)
@@ -242,12 +378,19 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    fun selectRoute(i: Int) {
+        if (i in routes.indices) selectedRoute = i
+        onUserInput()
+    }
+
     fun cancelPreview() {
         routeJob?.cancel()
         destination = null
-        preview = null
+        stops = emptyList()
+        routes = emptyList()
         routeError = null
         routing = false
+        autoStartAt = 0
         mode = Mode.BROWSE
         following = true
     }
@@ -255,7 +398,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun startNavigation() {
         val dest = destination ?: return
         val route = preview ?: return
-        Navigator.start(getApplication(), dest, route)
+        autoStartAt = 0
+        Navigator.start(getApplication(), dest, stops, route)
         mode = Mode.NAVIGATE
         following = true
     }
@@ -263,19 +407,48 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun stopNavigation() {
         Navigator.stop()
         destination = null
-        preview = null
+        stops = emptyList()
+        routes = emptyList()
         mode = Mode.BROWSE
         following = true
     }
 
-    // ------------------------------------------------------------------ map / hazards
+    // ------------------------------------------------------------------ voice / orientation
+
+    fun cycleVoice() {
+        val next = when (settings.value.voiceMode) {
+            VoiceMode.ALL -> VoiceMode.WARNINGS
+            VoiceMode.WARNINGS -> VoiceMode.OFF
+            VoiceMode.OFF -> VoiceMode.ALL
+        }
+        update { setVoiceMode(next) }
+        Navigator.onVoiceModeChanged(next)
+        toast(next.label)
+    }
+
+    fun cycleNavView() {
+        val next = when (settings.value.navView) {
+            NavView.HEADING -> NavView.NORTH
+            NavView.NORTH -> NavView.OVERVIEW
+            NavView.OVERVIEW -> NavView.HEADING
+        }
+        update { setNavView(next) }
+        following = next != NavView.OVERVIEW
+    }
+
+    // ------------------------------------------------------------------ map / hazards / POIs
 
     fun onCameraIdle(box: BBox, center: GeoPoint, zoom: Double) {
         lastView = Triple(box, center, zoom)
+        if (mode == Mode.OFFLINE_SELECT) offlineBounds = box
         val s = settings.value
         if (zoom < 9.5) return
-        if (!s.hasTraffic && !s.speedCameras) return
-        viewModelScope.launch { HazardRepo.loadForView(box, center, s.tomtomKey, s.speedCameras) }
+        if (s.hasTraffic || s.speedCameras) {
+            viewModelScope.launch { HazardRepo.loadForView(box, center, s.tomtomKey, s.speedCameras) }
+        }
+        if (s.chargers && zoom >= 9) {
+            viewModelScope.launch { HazardRepo.loadChargersForView(box, center, s.chargerOperators) }
+        }
     }
 
     fun saveCamera(lat: Double, lon: Double, zoom: Double) = update { this.saveCamera(lat, lon, zoom) }
@@ -293,12 +466,54 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 if (v != null && v.third >= 9.5) HazardRepo.loadForView(v.first, v.second, "", cameras = true)
             }
         }
-        toast(if (on) "Blitzer werden angezeigt" else "Blitzer ausgeblendet")
+    }
+
+    fun setChargers(on: Boolean) {
+        update { this.setChargers(on) }
+        if (!on) HazardRepo.clearChargers() else reloadChargers()
+    }
+
+    fun toggleChargerOperator(op: app.voidmaps.data.ChargeOperator) {
+        val cur = settings.value.chargerOperators
+        val next = if (op in cur) cur - op else cur + op
+        update { setChargerOperators(next) }
+        HazardRepo.clearChargers()
+        reloadChargers(next)
+    }
+
+    private fun reloadChargers(ops: Set<app.voidmaps.data.ChargeOperator> = settings.value.chargerOperators) {
+        val v = lastView ?: return
+        viewModelScope.launch {
+            delay(100)
+            if (v.third >= 9) HazardRepo.loadChargersForView(v.first, v.second, ops, force = true)
+        }
     }
 
     fun setTomTomKey(key: String) {
         update { this.setTomTomKey(key) }
         if (key.isBlank()) HazardRepo.clearIncidents()
+    }
+
+    // ------------------------------------------------------------------ offline maps
+
+    fun startOfflineSelection() {
+        showSettings = false
+        following = false
+        mode = Mode.OFFLINE_SELECT
+        offlineBounds = lastView?.first
+    }
+
+    fun cancelOfflineSelection() {
+        mode = Mode.BROWSE
+        showSettings = true
+    }
+
+    fun downloadOffline(name: String) {
+        val box = offlineBounds ?: return toast("Bereich nicht erkannt – Karte kurz bewegen")
+        OfflineMaps.download(getApplication(), name.ifBlank { "Bereich" }, box) { err -> toast("Download fehlgeschlagen: $err") }
+        toast("Download gestartet – Fortschritt unter Einstellungen → Offline-Karten")
+        mode = Mode.BROWSE
+        showSettings = true
     }
 
     // ------------------------------------------------------------------ external intents
@@ -323,7 +538,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
         if (q.isBlank()) return
         viewModelScope.launch {
-            val r = withContext(Dispatchers.IO) { runCatching { Search.search(q, myPosition()) }.getOrNull() }
+            val r = withContext(Dispatchers.IO) { runCatching { Search.search(q, myPosition(), settings.value.tomtomKey) }.getOrNull() }
             val first = r?.firstOrNull()
             if (first != null) goTo(first) else {
                 mode = Mode.SEARCH
@@ -391,5 +606,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun cancelDownload() {
         downloadJob?.cancel()
         downloadProgress = null
+    }
+
+    companion object {
+        const val AUTO_START_MS = 5_000L
     }
 }

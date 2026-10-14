@@ -5,8 +5,11 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -21,16 +24,20 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.VolumeOff
+import androidx.compose.material.icons.automirrored.outlined.VolumeUp
+import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.MyLocation
-import androidx.compose.material.icons.outlined.PhotoCamera
+import androidx.compose.material.icons.outlined.ReportProblem
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
-import androidx.compose.material.icons.outlined.Traffic
 import androidx.compose.material.icons.outlined.Work
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -41,6 +48,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -48,7 +56,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
@@ -60,8 +73,12 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import app.voidmaps.data.AppSettings
 import app.voidmaps.data.Format
 import app.voidmaps.data.HazardType
+import app.voidmaps.data.NavView
+import app.voidmaps.data.Route
+import app.voidmaps.data.VoiceMode
 import app.voidmaps.map.Follow
 import app.voidmaps.map.MapController
+import app.voidmaps.map.OfflineMaps
 import app.voidmaps.map.StyleConfig
 import app.voidmaps.nav.HazardRepo
 import app.voidmaps.nav.LocationTracker
@@ -71,6 +88,7 @@ import app.voidmaps.ui.theme.VoidTheme
 import app.voidmaps.ui.theme.dotNumber
 import app.voidmaps.ui.theme.headingStyle
 import app.voidmaps.ui.theme.mapPalette
+import kotlinx.coroutines.delay
 import org.maplibre.android.camera.CameraPosition
 import org.maplibre.android.geometry.LatLng
 import org.maplibre.android.maps.MapView
@@ -118,22 +136,26 @@ fun MapScreen(vm: MainViewModel, settings: AppSettings, design: Design, hasPermi
             controller.onTrackingDismissed = { vm.following = false }
             controller.onCameraIdle = { box, center, zoom -> vm.onCameraIdle(box, center, zoom) }
             controller.onTap = { _, hazard -> if (hazard != null) vm.tappedHazard = hazard }
+            controller.onPoiTap = { vm.tappedPoi = it }
+            controller.onRouteTap = { vm.selectRoute(it) }
+            controller.onGesture = { vm.onUserInput() }
             mapReady = true
         }
     }
 
     // Map design and traffic layer.
     val palette = mapPalette(design)
+    val puckBg = if (c.isDark) android.graphics.Color.BLACK else android.graphics.Color.WHITE
     LaunchedEffect(mapReady, design, settings.tomtomKey, settings.trafficLayer, settings.trafficOriginalColors) {
         if (!mapReady) return@LaunchedEffect
         controller.applyStyle(
             StyleConfig(palette, settings.tomtomKey, settings.trafficLayer, settings.trafficOriginalColors),
             accent = c.accent.toArgb(),
-            background = if (c.isDark) android.graphics.Color.BLACK else android.graphics.Color.WHITE,
+            background = puckBg,
         )
     }
     LaunchedEffect(mapReady, hasPermission) {
-        if (mapReady && hasPermission) controller.onPermissionGranted(c.accent.toArgb(), if (c.isDark) android.graphics.Color.BLACK else android.graphics.Color.WHITE)
+        if (mapReady && hasPermission) controller.onPermissionGranted(c.accent.toArgb(), puckBg)
     }
 
     val location by LocationTracker.location.collectAsState()
@@ -156,44 +178,64 @@ fun MapScreen(vm: MainViewModel, settings: AppSettings, design: Design, hasPermi
         controller.updateLocation(shown)
     }
 
-    // Route line: full preview, or the part still ahead while navigating.
-    val preview = vm.preview
-    LaunchedEffect(mapReady, vm.mode, preview, nav?.routeVersion, nav?.snap?.segment) {
+    // Routes: all alternatives in the preview, the part still ahead while navigating.
+    val routes = vm.routes
+    LaunchedEffect(mapReady, vm.mode, routes, vm.selectedRoute, nav?.routeVersion, nav?.snap?.segment) {
         if (!mapReady) return@LaunchedEffect
         val n = nav
         val snap = n?.snap
         when {
-            vm.mode == Mode.NAVIGATE && n != null ->
+            n != null && (vm.mode == Mode.NAVIGATE || vm.mode == Mode.SEARCH) ->
                 controller.setRoute(if (snap != null) n.route.line.remainder(snap.segment, snap.point) else n.route.points)
-            vm.mode == Mode.PREVIEW || vm.mode == Mode.SEARCH -> controller.setRoute(preview?.points)
+            vm.mode == Mode.PREVIEW || vm.mode == Mode.SEARCH -> controller.setRoutes(routes.map { it.points }, vm.selectedRoute)
             else -> controller.setRoute(null)
         }
     }
-    LaunchedEffect(mapReady, vm.destination) { if (mapReady) controller.setDestination(vm.destination) }
+    LaunchedEffect(mapReady, vm.destination, vm.stops, nav?.stops) {
+        if (mapReady) controller.setDestination(vm.destination ?: nav?.destination, nav?.stops ?: vm.stops)
+    }
 
     val incidents by HazardRepo.incidents.collectAsState()
     val cameras by HazardRepo.cameras.collectAsState()
+    val chargers by HazardRepo.chargers.collectAsState()
     LaunchedEffect(mapReady, incidents, cameras, settings.speedCameras) {
         if (mapReady) controller.setHazards(incidents + if (settings.speedCameras) cameras else emptyList())
+    }
+    LaunchedEffect(mapReady, chargers, settings.chargers, settings.chargerOperators) {
+        if (mapReady) controller.setPois(if (settings.chargers) chargers.filter { it.operator in settings.chargerOperators } else emptyList())
     }
 
     BoxWithConstraints(Modifier.fillMaxSize().background(c.background)) {
         val heightPx = with(density) { maxHeight.toPx() }
+        val overview = vm.mode == Mode.NAVIGATE && settings.navView == NavView.OVERVIEW
         val follow = when {
-            !vm.following -> Follow.NONE
+            !vm.following || overview -> Follow.NONE
             vm.mode == Mode.NAVIGATE -> Follow.NAVIGATE
             vm.mode == Mode.BROWSE -> Follow.BROWSE
             else -> Follow.NONE
         }
-        LaunchedEffect(mapReady, follow, settings.headingUp, settings.tilt3d, heightPx) {
-            if (mapReady) controller.setFollow(follow, settings.headingUp, settings.tilt3d, heightPx * 0.42)
+        val headingUp = if (vm.mode == Mode.NAVIGATE) settings.navView == NavView.HEADING else settings.headingUp
+        LaunchedEffect(mapReady, follow, headingUp, settings.tilt3d, heightPx) {
+            if (mapReady) controller.setFollow(follow, headingUp, settings.tilt3d, heightPx * 0.42)
         }
-        LaunchedEffect(mapReady, preview, vm.mode) {
-            if (mapReady && preview != null && vm.mode == Mode.PREVIEW) {
+        // Route overview while navigating: refit now and then as the route shrinks.
+        LaunchedEffect(mapReady, overview, nav?.routeVersion) {
+            while (mapReady && overview) {
+                val n = Navigator.state.value ?: break
+                val snap = n.snap
+                val pts = if (snap != null) n.route.line.remainder(snap.segment, snap.point) else n.route.points
                 with(density) {
-                    controller.showOverview(
-                        preview.points, 40.dp.roundToPx(), 150.dp.roundToPx(), 40.dp.roundToPx(), 300.dp.roundToPx(),
-                    )
+                    controller.showOverview(pts, 60.dp.roundToPx(), 260.dp.roundToPx(), 60.dp.roundToPx(), 200.dp.roundToPx())
+                }
+                delay(30_000)
+            }
+        }
+        val preview = vm.preview
+        LaunchedEffect(mapReady, routes, vm.mode) {
+            if (mapReady && preview != null && vm.mode == Mode.PREVIEW) {
+                val all = routes.flatMap { it.points }
+                with(density) {
+                    controller.showOverview(all, 40.dp.roundToPx(), 170.dp.roundToPx(), 40.dp.roundToPx(), 380.dp.roundToPx())
                 }
             }
         }
@@ -204,6 +246,7 @@ fun MapScreen(vm: MainViewModel, settings: AppSettings, design: Design, hasPermi
             Mode.BROWSE -> BrowseOverlay(vm, settings, hasPermission, onRequestPermission)
             Mode.PREVIEW -> PreviewOverlay(vm, settings)
             Mode.NAVIGATE -> nav?.let { NavigationOverlay(vm, settings, it) }
+            Mode.OFFLINE_SELECT -> OfflineSelectOverlay(vm)
             Mode.SEARCH -> {}
         }
         AnimatedVisibility(vm.mode == Mode.SEARCH, enter = fadeIn(), exit = fadeOut()) {
@@ -211,15 +254,48 @@ fun MapScreen(vm: MainViewModel, settings: AppSettings, design: Design, hasPermi
         }
     }
 
-    BackHandler(enabled = vm.mode == Mode.SEARCH || vm.mode == Mode.PREVIEW) {
+    BackHandler(enabled = vm.mode == Mode.SEARCH || vm.mode == Mode.PREVIEW || vm.mode == Mode.OFFLINE_SELECT) {
         when (vm.mode) {
             Mode.SEARCH -> vm.closeSearch()
             Mode.PREVIEW -> vm.cancelPreview()
+            Mode.OFFLINE_SELECT -> vm.cancelOfflineSelection()
             else -> {}
         }
     }
 
     vm.tappedHazard?.let { h -> HazardDialog(h) { vm.tappedHazard = null } }
+    vm.tappedPoi?.let { p ->
+        PoiDialog(
+            p,
+            navigating = nav != null,
+            onDismiss = { vm.tappedPoi = null },
+            onGo = {
+                vm.tappedPoi = null
+                if (nav != null) Navigator.stop()
+                vm.goTo(p.toPlace())
+            },
+            onStop = {
+                vm.tappedPoi = null
+                Navigator.addStop(p.toPlace())
+            },
+        )
+    }
+    vm.pendingChoice?.let { p ->
+        ChoiceDialog(p.name, onStop = { vm.resolvePending(true) }, onNew = { vm.resolvePending(false) }) { vm.pendingChoice = null }
+    }
+}
+
+/** Mute / only warnings / loud – one button cycling through the three modes. */
+@Composable
+fun VoiceButton(vm: MainViewModel, mode: VoiceMode) {
+    val c = VoidTheme.colors
+    val icon: ImageVector = when (mode) {
+        VoiceMode.ALL -> Icons.AutoMirrored.Outlined.VolumeUp
+        VoiceMode.WARNINGS -> Icons.Outlined.ReportProblem
+        VoiceMode.OFF -> Icons.AutoMirrored.Outlined.VolumeOff
+    }
+    MapButton(icon, "Ansagen: ${mode.label}", onClick = { vm.cycleVoice() }, active = mode != VoiceMode.OFF,
+        activeColor = if (mode == VoiceMode.WARNINGS) c.warn else c.accent)
 }
 
 @Composable
@@ -237,7 +313,7 @@ private fun BrowseOverlay(vm: MainViewModel, settings: AppSettings, hasPermissio
                 Text("WOHIN?", style = headingStyle(22), color = c.text, modifier = Modifier.weight(1f))
                 IconButton(onClick = { vm.showSettings = true }) {
                     Box {
-                        Icon(Icons.Outlined.Settings, "Einstellungen", tint = c.text)
+                        Icon(Icons.Outlined.Settings, "Menü", tint = c.text)
                         if (vm.availableUpdate != null) {
                             Box(Modifier.size(8.dp).clip(CircleShape).background(c.accent).align(Alignment.TopEnd))
                         }
@@ -247,34 +323,17 @@ private fun BrowseOverlay(vm: MainViewModel, settings: AppSettings, hasPermissio
             if (settings.home != null || settings.work != null) {
                 Spacer(Modifier.height(10.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    settings.home?.let { home ->
-                        QuickChip("Zuhause", Icons.Outlined.Home) { vm.goTo(home) }
-                    }
-                    settings.work?.let { work ->
-                        QuickChip("Arbeit", Icons.Outlined.Work) { vm.goTo(work) }
-                    }
+                    settings.home?.let { home -> QuickChip("Zuhause", Icons.Outlined.Home) { vm.goTo(home) } }
+                    settings.work?.let { work -> QuickChip("Arbeit", Icons.Outlined.Work) { vm.goTo(work) } }
                 }
             }
         }
 
-        Column(
-            Modifier.align(Alignment.CenterEnd).padding(end = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            MapButton(Icons.Outlined.Traffic, "Verkehr", onClick = {
-                if (!settings.hasTraffic) vm.toast("Für Verkehrsdaten den TomTom-Schlüssel in den Einstellungen eintragen")
-                else {
-                    val on = !settings.trafficLayer
-                    vm.update { setTraffic(on) }
-                }
-            }, active = settings.hasTraffic && settings.trafficLayer)
-            SpeedCameraButton(vm, settings)
+        Column(Modifier.align(Alignment.CenterEnd).padding(end = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            VoiceButton(vm, settings.voiceMode)
         }
 
-        Column(
-            Modifier.align(Alignment.BottomEnd).navigationBarsPadding().padding(16.dp),
-            horizontalAlignment = Alignment.End,
-        ) {
+        Column(Modifier.align(Alignment.BottomEnd).navigationBarsPadding().padding(16.dp), horizontalAlignment = Alignment.End) {
             MapButton(
                 Icons.Outlined.MyLocation, "Mein Standort",
                 onClick = { if (!hasPermission) onRequestPermission() else vm.following = true },
@@ -298,16 +357,7 @@ private fun BrowseOverlay(vm: MainViewModel, settings: AppSettings, hasPermissio
 }
 
 @Composable
-fun SpeedCameraButton(vm: MainViewModel, settings: AppSettings) {
-    MapButton(
-        Icons.Outlined.PhotoCamera, "Blitzer anzeigen",
-        onClick = { vm.setSpeedCameras(!settings.speedCameras) },
-        active = settings.speedCameras,
-    )
-}
-
-@Composable
-private fun QuickChip(text: String, icon: androidx.compose.ui.graphics.vector.ImageVector, onClick: () -> Unit) {
+private fun QuickChip(text: String, icon: ImageVector, onClick: () -> Unit) {
     val c = VoidTheme.colors
     Row(
         Modifier.shadow(6.dp, RoundedCornerShape(50)).clip(RoundedCornerShape(50)).background(c.surface)
@@ -324,29 +374,39 @@ private fun QuickChip(text: String, icon: androidx.compose.ui.graphics.vector.Im
 private fun PreviewOverlay(vm: MainViewModel, settings: AppSettings) {
     val c = VoidTheme.colors
     val dest = vm.destination ?: return
-    val route = vm.preview
     val incidents by HazardRepo.incidents.collectAsState()
     val cameras by HazardRepo.cameras.collectAsState()
     Box(Modifier.fillMaxSize()) {
         MapCard(Modifier.statusBarsPadding().padding(horizontal = 16.dp, vertical = 10.dp).fillMaxWidth()) {
-            Row(Modifier.padding(start = 20.dp, end = 6.dp, top = 12.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Label("Ziel")
-                    Text(dest.name, style = MaterialTheme.typography.titleMedium, color = c.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    if (dest.detail.isNotBlank()) {
-                        Text(dest.detail, style = MaterialTheme.typography.bodyMedium, color = c.textMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Column(Modifier.padding(start = 20.dp, end = 6.dp, top = 12.dp, bottom = 10.dp)) {
+                vm.stops.forEachIndexed { i, s ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Label("Zwischenziel ${i + 1}")
+                            Text(s.name, style = MaterialTheme.typography.bodyLarge, color = c.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                        IconButton(onClick = { vm.removeStop(s) }) { Icon(Icons.Outlined.Close, "Entfernen", tint = c.textMuted, modifier = Modifier.size(18.dp)) }
                     }
                 }
-                IconButton(onClick = { vm.openSearch() }) { Icon(Icons.Outlined.Search, "Suchen", tint = c.text) }
-                IconButton(onClick = { vm.cancelPreview() }) { Icon(Icons.Outlined.Close, "Schließen", tint = c.text) }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Label("Ziel")
+                        Text(dest.name, style = MaterialTheme.typography.titleMedium, color = c.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        if (dest.detail.isNotBlank()) {
+                            Text(dest.detail, style = MaterialTheme.typography.bodyMedium, color = c.textMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
+                    IconButton(onClick = { vm.openSearch(Pick.STOP) }) { Icon(Icons.Outlined.Add, "Zwischenziel", tint = c.accent) }
+                    IconButton(onClick = { vm.cancelPreview() }) { Icon(Icons.Outlined.Close, "Schließen", tint = c.text) }
+                }
             }
         }
 
         MapCard(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(16.dp).fillMaxWidth()) {
-            Column(Modifier.padding(22.dp)) {
+            Column(Modifier.padding(18.dp)) {
                 when {
                     vm.routing -> {
-                        Label("Route wird berechnet")
+                        Label("Routen werden berechnet")
                         Spacer(Modifier.height(18.dp))
                         DotLoader(Modifier.fillMaxWidth().height(12.dp))
                         Spacer(Modifier.height(10.dp))
@@ -358,39 +418,148 @@ private fun PreviewOverlay(vm: MainViewModel, settings: AppSettings) {
                         Spacer(Modifier.height(14.dp))
                         Pill("Erneut versuchen", selected = true, onClick = { vm.computeRoute() }, filledColor = c.accent)
                     }
-                    route != null -> {
-                        Row(verticalAlignment = Alignment.Bottom) {
-                            Text(Format.duration(route.duration).uppercase(), style = dotNumber(40), color = c.text)
-                            Spacer(Modifier.width(14.dp))
-                            Text(Format.distance(route.distance), style = MaterialTheme.typography.titleMedium, color = c.textMuted, modifier = Modifier.padding(bottom = 6.dp))
-                        }
-                        Spacer(Modifier.height(4.dp))
-                        val eta = System.currentTimeMillis() + (route.duration * 1000).toLong()
-                        Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                            Label("Ankunft ${Format.clock(eta)}", color = c.text)
-                            if (route.trafficDelay >= 60) Label("+${Format.duration(route.trafficDelay)} Verkehr", color = c.warn)
-                            Label(route.engine)
-                        }
-                        val onRoute = remember(route, incidents, cameras, settings.speedCameras) {
-                            val list = incidents + if (settings.speedCameras) cameras else emptyList()
-                            list.count { h ->
-                                val s = route.line.snap(h.point)
-                                s != null && s.offset < if (h.type == HazardType.SPEED_CAMERA) 35 else 60
+                    vm.routes.isNotEmpty() -> {
+                        val fastest = vm.routes.minOf { it.duration }
+                        vm.routes.forEachIndexed { i, r ->
+                            val hazards = remember(r, incidents, cameras, settings.speedCameras) {
+                                val list = incidents + if (settings.speedCameras) cameras else emptyList()
+                                list.count { h ->
+                                    val s = r.line.snap(h.point)
+                                    s != null && s.offset < if (h.type == HazardType.SPEED_CAMERA) 35 else 60
+                                }
                             }
+                            RouteOption(r, selected = i == vm.selectedRoute, fastest = fastest, hazards = hazards) { vm.selectRoute(i) }
+                            if (i < vm.routes.size - 1) Spacer(Modifier.height(8.dp))
                         }
-                        if (onRoute > 0) {
-                            Spacer(Modifier.height(8.dp))
-                            Label("$onRoute ${if (onRoute == 1) "Meldung" else "Meldungen"} auf der Strecke", color = c.warn)
-                        }
-                        Spacer(Modifier.height(18.dp))
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Pill("Start", selected = true, onClick = { vm.startNavigation() }, filledColor = c.accent, modifier = Modifier.weight(1f))
-                            Spacer(Modifier.width(10.dp))
-                            Pill(if (settings.speedCameras) "Blitzer an" else "Blitzer aus", selected = false, onClick = { vm.setSpeedCameras(!settings.speedCameras) })
-                        }
+                        Spacer(Modifier.height(14.dp))
+                        StartButton(vm)
                     }
                 }
             }
         }
     }
+}
+
+@Composable
+private fun RouteOption(r: Route, selected: Boolean, fastest: Double, hazards: Int, onClick: () -> Unit) {
+    val c = VoidTheme.colors
+    val shape = RoundedCornerShape(18.dp)
+    Row(
+        Modifier.fillMaxWidth().clip(shape)
+            .background(if (selected) c.surfaceHigh else c.surface)
+            .border(if (selected) 2.dp else 1.dp, if (selected) c.accent else c.divider, shape)
+            .clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.Bottom) {
+                Text(Format.duration(r.duration).uppercase(), style = dotNumber(if (selected) 28 else 22), color = c.text)
+                Spacer(Modifier.width(10.dp))
+                Text(Format.distance(r.distance), style = MaterialTheme.typography.bodyMedium, color = c.textMuted, modifier = Modifier.padding(bottom = 3.dp))
+            }
+            val extra = listOfNotNull(
+                r.via.takeIf { it.isNotBlank() }?.let { "über $it" },
+                if (r.trafficDelay >= 60) "+${Format.duration(r.trafficDelay)} Verkehr" else null,
+                if (hazards > 0) "$hazards ${if (hazards == 1) "Meldung" else "Meldungen"}" else null,
+            ).joinToString(" · ")
+            if (extra.isNotBlank()) Text(extra, style = MaterialTheme.typography.bodyMedium, color = c.textMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        Column(horizontalAlignment = Alignment.End) {
+            if (r.duration <= fastest + 1) Label("Schnellste", color = c.accent) else Label("+${Format.duration(r.duration - fastest)}")
+            Label("an ${Format.clock(System.currentTimeMillis() + (r.duration * 1000).toLong())}")
+        }
+    }
+}
+
+/** START with a dot ring that fills during the 5 second auto-start countdown. */
+@Composable
+private fun StartButton(vm: MainViewModel) {
+    val c = VoidTheme.colors
+    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(vm.autoStartAt) {
+        while (vm.autoStartAt > 0) {
+            now = System.currentTimeMillis()
+            delay(50)
+        }
+    }
+    val at = vm.autoStartAt
+    val progress = if (at > 0) (1f - (at - now).toFloat() / MainViewModel.AUTO_START_MS).coerceIn(0f, 1f) else null
+    Row(
+        Modifier.fillMaxWidth().height(56.dp).clip(RoundedCornerShape(28.dp)).background(c.accent)
+            .clickable { vm.startNavigation() }.padding(horizontal = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(Modifier.size(40.dp), contentAlignment = Alignment.Center) {
+            if (progress != null) DotRing(progress, Modifier.size(36.dp), color = c.onAccent)
+        }
+        Text(
+            "START", style = headingStyle(24), color = c.onAccent,
+            modifier = Modifier.weight(1f), textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+        )
+        Box(Modifier.size(40.dp), contentAlignment = Alignment.Center) {
+            if (progress != null) Text("${((at - now) / 1000 + 1).coerceIn(1, 5)}", style = dotNumber(18), color = c.onAccent)
+        }
+    }
+}
+
+@Composable
+private fun OfflineSelectOverlay(vm: MainViewModel) {
+    val c = VoidTheme.colors
+    var name by remember { mutableStateOf("") }
+    Box(Modifier.fillMaxSize()) {
+        // Dashed frame: the visible area is what gets downloaded.
+        Canvas(Modifier.fillMaxSize().padding(14.dp)) {
+            drawRoundRect(
+                c.accent, style = Stroke(3.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(2f, 14f), 0f), cap = androidx.compose.ui.graphics.StrokeCap.Round),
+                cornerRadius = androidx.compose.ui.geometry.CornerRadius(28.dp.toPx()),
+                topLeft = Offset.Zero,
+            )
+        }
+        MapCard(Modifier.statusBarsPadding().padding(horizontal = 24.dp, vertical = 20.dp).fillMaxWidth()) {
+            Column(Modifier.padding(18.dp)) {
+                Text("OFFLINE-KARTE", style = headingStyle(24), color = c.text)
+                Text(
+                    "Karte so verschieben und zoomen, dass der gewünschte Bereich im Rahmen liegt.",
+                    style = MaterialTheme.typography.bodyMedium, color = c.textMuted,
+                )
+            }
+        }
+        MapCard(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(24.dp).fillMaxWidth()) {
+            Column(Modifier.padding(18.dp)) {
+                val box = vm.offlineBounds
+                if (box != null) {
+                    val tiles = OfflineMaps.estimateTiles(box)
+                    val bytes = OfflineMaps.estimateBytes(box)
+                    Label("ca. ${formatSize(bytes)} · ${"%,d".format(java.util.Locale.GERMANY, tiles)} Kacheln", color = if (tiles > 250_000) c.warn else c.text)
+                    if (tiles > 250_000) Text("Sehr großer Bereich – der Download dauert lange.", style = MaterialTheme.typography.bodyMedium, color = c.warn)
+                }
+                Spacer(Modifier.height(10.dp))
+                Box(
+                    Modifier.fillMaxWidth().height(46.dp).clip(RoundedCornerShape(23.dp)).background(c.surfaceHigh).padding(horizontal = 16.dp),
+                    contentAlignment = Alignment.CenterStart,
+                ) {
+                    if (name.isEmpty()) Text("Name, z. B. Hamburg", color = c.textMuted, style = MaterialTheme.typography.bodyMedium)
+                    BasicTextField(
+                        value = name, onValueChange = { name = it }, singleLine = true,
+                        textStyle = MaterialTheme.typography.bodyLarge.copy(color = c.text), cursorBrush = SolidColor(c.accent),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+                Spacer(Modifier.height(12.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Pill("Herunterladen", selected = true, onClick = { vm.downloadOffline(name) }, filledColor = c.accent, modifier = Modifier.weight(1f))
+                    Pill("Abbrechen", selected = false, onClick = { vm.cancelOfflineSelection() })
+                }
+            }
+        }
+    }
+}
+
+/** Horizontal row of chips (used for the POI categories). */
+@Composable
+fun ChipRow(content: @Composable () -> Unit) {
+    Row(
+        Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) { content() }
 }

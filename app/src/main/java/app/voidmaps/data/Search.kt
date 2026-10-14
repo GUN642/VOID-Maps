@@ -18,21 +18,54 @@ data class Place(val name: String, val detail: String, val point: GeoPoint) {
     }
 }
 
-/** Address and place search with Photon (OpenStreetMap data, no API key). */
+/**
+ * Address and place search. With a TomTom key the fast TomTom fuzzy search is used (addresses and POIs),
+ * otherwise Photon (OpenStreetMap data, no key).
+ */
 object Search {
     private const val BASE = "https://photon.komoot.io"
 
-    fun search(query: String, near: GeoPoint?): List<Place> {
+    fun search(query: String, near: GeoPoint?, tomtomKey: String = ""): List<Place> {
         val q = query.trim()
         if (q.length < 2) return emptyList()
         coordinates(q)?.let { return listOf(Place("Koordinaten", "%.5f, %.5f".format(java.util.Locale.US, it.lat, it.lon), it)) }
+        if (tomtomKey.isNotBlank()) {
+            runCatching { return tomtom(q, near, tomtomKey) }
+        }
         var url = "$BASE/api/?q=${Http.enc(q)}&lang=de&limit=10"
         if (near != null) url += "&lat=${near.lat}&lon=${near.lon}&location_bias_scale=0.4"
-        return parse(Http.get(url))
+        return parse(Http.get(url, timeoutMs = 8_000))
+    }
+
+    private fun tomtom(q: String, near: GeoPoint?, key: String): List<Place> {
+        var url = "https://api.tomtom.com/search/2/search/${Http.enc(q).replace("+", "%20")}.json" +
+            "?key=${Http.enc(key)}&language=de-DE&limit=10&typeahead=true"
+        if (near != null) url += "&lat=${near.lat}&lon=${near.lon}"
+        val results = JSONObject(Http.get(url, timeoutMs = 6_000)).optJSONArray("results") ?: return emptyList()
+        val out = ArrayList<Place>()
+        for (i in 0 until results.length()) {
+            val r = results.getJSONObject(i)
+            val pos = r.optJSONObject("position") ?: continue
+            val addr = r.optJSONObject("address") ?: JSONObject()
+            val poi = r.optJSONObject("poi")
+            val street = listOf(addr.optString("streetName"), addr.optString("streetNumber")).filter { it.isNotBlank() }.joinToString(" ")
+            val city = addr.optString("municipality")
+            val title = poi?.optString("name")?.takeIf { it.isNotBlank() }
+                ?: street.ifBlank { city.ifBlank { addr.optString("freeformAddress") } }
+            if (title.isBlank()) continue
+            val detail = listOf(
+                if (poi != null) street else "",
+                listOf(addr.optString("postalCode"), city).filter { it.isNotBlank() }.joinToString(" "),
+                addr.optString("country").takeIf { it.isNotBlank() && addr.optString("countryCode") != "DE" }.orEmpty(),
+            ).filter { it.isNotBlank() && it != title }.joinToString(", ")
+            val place = Place(title, detail, GeoPoint(pos.getDouble("lat"), pos.getDouble("lon")))
+            if (out.none { it.name == place.name && it.detail == place.detail }) out += place
+        }
+        return out
     }
 
     fun reverse(p: GeoPoint): Place? = runCatching {
-        parse(Http.get("$BASE/reverse?lat=${p.lat}&lon=${p.lon}&lang=de&limit=1")).firstOrNull()?.copy(point = p)
+        parse(Http.get("$BASE/reverse?lat=${p.lat}&lon=${p.lon}&lang=de&limit=1", timeoutMs = 6_000)).firstOrNull()?.copy(point = p)
     }.getOrNull()
 
     /** Accepts "52.52, 13.40" style input. */

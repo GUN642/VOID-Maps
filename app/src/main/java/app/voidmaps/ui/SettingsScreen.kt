@@ -35,6 +35,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -51,6 +52,10 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import app.voidmaps.BuildConfig
 import app.voidmaps.data.AppSettings
+import app.voidmaps.data.ChargeOperator
+import app.voidmaps.data.VoiceMode
+import app.voidmaps.map.OfflineMaps
+import app.voidmaps.nav.Navigator
 import app.voidmaps.data.RoutingEngine
 import app.voidmaps.data.ThemeChoice
 import app.voidmaps.data.Updater
@@ -89,7 +94,20 @@ fun SettingsScreen(vm: MainViewModel, s: AppSettings, onBack: () -> Unit) {
             Toggle("3D-Ansicht bei Navigation", "Geneigte Karte während der Zielführung", s.tilt3d) { v -> vm.update { setTilt(v) } }
 
             Group("Navigation")
-            Toggle("Sprachansagen", "Deutsche Ansagen, Musik wird kurz leiser", s.voice) { v -> vm.update { setVoice(v) } }
+            Label("Sprachansagen")
+            Spacer(Modifier.height(8.dp))
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                VoiceMode.entries.forEach { m ->
+                    Pill(m.label, selected = m == s.voiceMode, onClick = {
+                        vm.update { setVoiceMode(m) }
+                        Navigator.onVoiceModeChanged(m)
+                    })
+                }
+            }
+            Spacer(Modifier.height(6.dp))
+            Toggle("Kurze Ansagen", "„In 300 Metern rechts abbiegen“ statt ausführlicher Sätze", s.shortAnnouncements) { v ->
+                vm.update { setShortAnnouncements(v) }
+            }
             Toggle("Mautstraßen vermeiden", null, s.avoidTolls) { v -> vm.update { setAvoidTolls(v) } }
             Toggle("Autobahnen vermeiden", null, s.avoidMotorways) { v -> vm.update { setAvoidMotorways(v) } }
             Spacer(Modifier.height(8.dp))
@@ -119,6 +137,21 @@ fun SettingsScreen(vm: MainViewModel, s: AppSettings, onBack: () -> Unit) {
             Toggle("TomTom-Originalfarben", "Grün/Gelb/Rot statt der Farben des Designs", s.trafficOriginalColors) { v ->
                 vm.update { setTrafficOriginal(v) }
             }
+
+            Group("Ladesäulen")
+            Toggle("Ladesäulen anzeigen", "Schnelllader aus OpenStreetMap auf der Karte", s.chargers) { v -> vm.setChargers(v) }
+            if (s.chargers) {
+                Spacer(Modifier.height(6.dp))
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ChargeOperator.entries.forEach { op ->
+                        Pill(op.label, selected = op in s.chargerOperators, onClick = { vm.toggleChargerOperator(op) },
+                            filledColor = Color(android.graphics.Color.parseColor(op.color)))
+                    }
+                }
+            }
+
+            Group("Offline-Karten")
+            OfflineSection(vm)
 
             Group("Blitzer")
             Toggle("Blitzer anzeigen", "Feste Anlagen aus OpenStreetMap, mit Ansage", s.speedCameras) { v -> vm.setSpeedCameras(v) }
@@ -242,6 +275,49 @@ private fun UpdateSection(vm: MainViewModel, s: AppSettings) {
             }
         }
     }
+}
+
+@Composable
+private fun OfflineSection(vm: MainViewModel) {
+    val c = VoidTheme.colors
+    val areas by OfflineMaps.areas.collectAsState()
+    Text(
+        "Kartenbereiche für Funklöcher speichern. Suche und Routenberechnung brauchen weiterhin Internet.",
+        color = c.textMuted, style = MaterialTheme.typography.bodyMedium,
+    )
+    Spacer(Modifier.height(10.dp))
+    areas.forEach { a ->
+        Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(a.name, color = c.text, style = MaterialTheme.typography.bodyLarge)
+                    Label(
+                        when {
+                            a.error != null -> "Fehler: ${a.error}"
+                            a.complete -> "Fertig · ${formatSize(a.bytes)}"
+                            a.downloading -> "${(a.progress * 100).toInt()} % · ${formatSize(a.bytes)}"
+                            else -> "Pausiert · ${(a.progress * 100).toInt()} %"
+                        },
+                        color = if (a.error != null) c.warn else c.textMuted,
+                    )
+                }
+                if (!a.complete) {
+                    TextButton(onClick = { if (a.downloading) OfflineMaps.pause(a.id) else OfflineMaps.resume(a.id) }) {
+                        Text(if (a.downloading) "PAUSE" else "WEITER", style = MaterialTheme.typography.labelMedium, color = c.accent)
+                    }
+                }
+                TextButton(onClick = { OfflineMaps.delete(a.id) }) {
+                    Text("LÖSCHEN", style = MaterialTheme.typography.labelMedium, color = c.textMuted)
+                }
+            }
+            if (!a.complete) {
+                Spacer(Modifier.height(4.dp))
+                DotBar(a.progress, Modifier.fillMaxWidth().height(8.dp), dots = 32)
+            }
+        }
+    }
+    Spacer(Modifier.height(8.dp))
+    Pill("Bereich herunterladen", selected = true, onClick = { vm.startOfflineSelection() }, filledColor = c.accent)
 }
 
 @OptIn(ExperimentalLayoutApi::class)

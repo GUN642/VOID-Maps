@@ -15,6 +15,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import app.voidmaps.BuildConfig
 import app.voidmaps.data.Hazard
+import app.voidmaps.data.Poi
 import app.voidmaps.data.Release
 import app.voidmaps.ui.theme.VoidTheme
 import app.voidmaps.ui.theme.headingStyle
@@ -98,6 +99,32 @@ fun HazardDialog(h: Hazard, onDismiss: () -> Unit) {
             Text(h.description, color = c.text)
             if (h.delay > 0) Label("Verzögerung ca. ${(h.delay + 30) / 60} min", color = c.warn)
             Label(if (h.id.startsWith("osm:")) "Quelle: OpenStreetMap" else "Quelle: TomTom")
+        }
+    }
+}
+
+@Composable
+fun PoiDialog(p: Poi, navigating: Boolean, onDismiss: () -> Unit, onGo: () -> Unit, onStop: () -> Unit) {
+    val c = VoidTheme.colors
+    VoidDialog(p.operator?.label ?: p.name, onDismiss, if (navigating) "Zwischenziel" else "Hierher navigieren", if (navigating) onStop else onGo, dismissText = "Schließen") {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(p.name, color = c.text, style = MaterialTheme.typography.titleMedium)
+            Text(p.detail, color = c.textMuted)
+            Label("Quelle: OpenStreetMap")
+            if (navigating) {
+                TextButton(onClick = onGo) { Text("ALS NEUES ZIEL", style = MaterialTheme.typography.labelLarge, color = c.textMuted) }
+            }
+        }
+    }
+}
+
+@Composable
+fun ChoiceDialog(name: String, onStop: () -> Unit, onNew: () -> Unit, onDismiss: () -> Unit) {
+    val c = VoidTheme.colors
+    VoidDialog("Navigation läuft", onDismiss, "Zwischenziel", onStop, dismissText = "Abbrechen") {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("„$name“ als Zwischenziel einfügen oder als neues Ziel verwenden?", color = c.text)
+            TextButton(onClick = onNew) { Text("NEUES ZIEL", style = MaterialTheme.typography.labelLarge, color = c.accent) }
         }
     }
 }

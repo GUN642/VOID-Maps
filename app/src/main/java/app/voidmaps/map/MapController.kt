@@ -10,6 +10,7 @@ import app.voidmaps.data.GeoPoint
 import app.voidmaps.data.Hazard
 import app.voidmaps.data.HazardType
 import app.voidmaps.data.Place
+import app.voidmaps.data.Poi
 import app.voidmaps.nav.LocationTracker
 import org.json.JSONArray
 import org.json.JSONObject
@@ -39,6 +40,10 @@ class MapController(private val context: Context) {
 
     var onLongPress: (GeoPoint) -> Unit = {}
     var onTap: (GeoPoint, Hazard?) -> Unit = { _, _ -> }
+    var onRouteTap: (Int) -> Unit = {}
+    var onPoiTap: (Poi) -> Unit = {}
+    /** The user touched the map (pan, zoom, rotate). */
+    var onGesture: () -> Unit = {}
     var onCameraIdle: (BBox, GeoPoint, Double) -> Unit = { _, _, _ -> }
     var onTrackingDismissed: () -> Unit = {}
 
@@ -46,7 +51,9 @@ class MapController(private val context: Context) {
     private var hazardJson: String = EMPTY
     private var hazardLineJson: String = EMPTY
     private var destJson: String = EMPTY
+    private var poiJson: String = EMPTY
     private var hazardById: Map<String, Hazard> = emptyMap()
+    private var poiById: Map<String, Poi> = emptyMap()
 
     private var follow = Follow.NONE
     private var headingUp = true
@@ -73,10 +80,30 @@ class MapController(private val context: Context) {
         }
         m.addOnMapClickListener { ll ->
             val screen = m.projection.toScreenLocation(ll)
-            val hit = runCatching { m.queryRenderedFeatures(screen, "hazard-icons") }.getOrNull()
+            val box = android.graphics.RectF(screen.x - 24, screen.y - 24, screen.x + 24, screen.y + 24)
+            val hit = runCatching { m.queryRenderedFeatures(box, "hazard-icons") }.getOrNull()
                 ?.firstOrNull()?.getStringProperty("id")?.let { hazardById[it] }
-            onTap(GeoPoint(ll.latitude, ll.longitude), hit)
-            hit != null
+            if (hit != null) {
+                onTap(GeoPoint(ll.latitude, ll.longitude), hit)
+                return@addOnMapClickListener true
+            }
+            val poi = runCatching { m.queryRenderedFeatures(box, "poi-icons") }.getOrNull()
+                ?.firstOrNull()?.getStringProperty("id")?.let { poiById[it] }
+            if (poi != null) {
+                onPoiTap(poi)
+                return@addOnMapClickListener true
+            }
+            val route = runCatching { m.queryRenderedFeatures(box, "route-alt") }.getOrNull()
+                ?.firstOrNull()?.getNumberProperty("idx")?.toInt()
+            if (route != null) {
+                onRouteTap(route)
+                return@addOnMapClickListener true
+            }
+            onTap(GeoPoint(ll.latitude, ll.longitude), null)
+            false
+        }
+        m.addOnCameraMoveStartedListener { reason ->
+            if (reason == MapLibreMap.OnCameraMoveStartedListener.REASON_API_GESTURE) onGesture()
         }
         m.addOnCameraIdleListener {
             val region = m.projection.visibleRegion.latLngBounds
@@ -190,10 +217,10 @@ class MapController(private val context: Context) {
                     if (m.cameraPosition.zoom < 13) lc.zoomWhileTracking(15.5, 800)
                 }
                 Follow.NAVIGATE -> {
-                    lc.cameraMode = CameraMode.TRACKING_GPS
+                    lc.cameraMode = if (headingUp) CameraMode.TRACKING_GPS else CameraMode.TRACKING_GPS_NORTH
                     lc.paddingWhileTracking(doubleArrayOf(0.0, topPadding, 0.0, 0.0), 600)
                     lc.zoomWhileTracking(16.5, 800)
-                    lc.tiltWhileTracking(if (tilt) 55.0 else 0.0, 800)
+                    lc.tiltWhileTracking(if (tilt && headingUp) 55.0 else 0.0, 800)
                 }
             }
         }
@@ -229,14 +256,53 @@ class MapController(private val context: Context) {
 
     // ------------------------------------------------------------------ data layers
 
-    fun setRoute(points: List<GeoPoint>?) {
-        routeJson = if (points == null || points.size < 2) EMPTY else featureCollection(listOf(lineFeature(points, JSONObject())))
+    fun setRoute(points: List<GeoPoint>?) = setRoutes(if (points == null) emptyList() else listOf(points), 0)
+
+    /** Draws several routes; [selected] in the route colour, the others as grey alternatives. */
+    fun setRoutes(routes: List<List<GeoPoint>>, selected: Int) {
+        val features = routes.mapIndexedNotNull { i, pts ->
+            if (pts.size < 2) null else lineFeature(pts, JSONObject().put("sel", if (i == selected) 1 else 0).put("idx", i))
+        }.sortedBy { it.getJSONObject("properties").getInt("sel") }
+        routeJson = if (features.isEmpty()) EMPTY else featureCollection(features)
         push(MapStyle.ROUTE, routeJson)
     }
 
-    fun setDestination(place: Place?) {
-        destJson = if (place == null) EMPTY else featureCollection(listOf(pointFeature(place.point, JSONObject())))
+    fun setDestination(place: Place?, stops: List<Place> = emptyList()) {
+        val features = stops.map { pointFeature(it.point, JSONObject().put("icon", "stop")) } +
+            listOfNotNull(place?.let { pointFeature(it.point, JSONObject().put("icon", "dest")) })
+        destJson = if (features.isEmpty()) EMPTY else featureCollection(features)
         push(MapStyle.DEST, destJson)
+    }
+
+    fun setPois(list: List<Poi>) {
+        poiById = list.associateBy { it.id }
+        poiJson = featureCollection(list.mapNotNull { p ->
+            val icon = p.operator?.icon ?: return@mapNotNull null
+            pointFeature(p.point, JSONObject().put("icon", icon).put("id", p.id))
+        })
+        push(MapStyle.POIS, poiJson)
+    }
+
+    /** Visible area of the map (for offline downloads). */
+    fun visibleBounds(): BBox? {
+        val m = map ?: return null
+        val r = m.projection.visibleRegion.latLngBounds
+        return BBox(r.getLatSouth(), r.getLonWest(), r.getLatNorth(), r.getLonEast())
+    }
+
+    fun zoom(): Double = map?.cameraPosition?.zoom ?: 0.0
+
+    // Gestures forwarded from Android Auto.
+    fun scrollBy(dx: Float, dy: Float) {
+        val m = map ?: return
+        follow = Follow.NONE
+        runCatching { if (m.locationComponent.isLocationComponentActivated) m.locationComponent.cameraMode = CameraMode.NONE }
+        m.scrollBy(-dx, -dy, 0)
+    }
+
+    fun zoomBy(delta: Double) {
+        val m = map ?: return
+        m.animateCamera(CameraUpdateFactory.zoomBy(delta), 300)
     }
 
     fun setHazards(list: List<Hazard>) {
@@ -260,6 +326,7 @@ class MapController(private val context: Context) {
         push(MapStyle.HAZARDS, hazardJson)
         push(MapStyle.HAZARD_LINES, hazardLineJson)
         push(MapStyle.DEST, destJson)
+        push(MapStyle.POIS, poiJson)
     }
 
     private fun push(source: String, json: String) {

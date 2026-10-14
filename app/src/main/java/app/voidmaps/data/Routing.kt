@@ -31,10 +31,38 @@ class Route(
     val engine: String,
     /** Cumulative travel time per point, used for the remaining time and the arrival estimate. */
     private val cumulativeTime: DoubleArray,
+    /** Intermediate stops (Zwischenziele) in driving order. */
+    val waypoints: List<GeoPoint> = emptyList(),
 ) {
     val line = Polyline(points)
     val distance: Double get() = line.length
     val maneuverAlong: DoubleArray = DoubleArray(maneuvers.size) { line.cumulative[maneuvers[it].pointIndex.coerceIn(0, points.size - 1)] }
+
+    /** Metres from the start to each intermediate stop. */
+    val waypointAlong: DoubleArray = run {
+        var hint = 0
+        DoubleArray(waypoints.size) { i ->
+            val s = line.snap(waypoints[i], hint, window = points.size)
+            if (s != null) hint = s.segment
+            s?.along ?: 0.0
+        }
+    }
+
+    /** Main roads of the route, e.g. "A 7, B 27" – helps telling alternatives apart. */
+    val via: String = run {
+        val lengths = HashMap<String, Double>()
+        for (i in maneuvers.indices) {
+            val street = maneuvers[i].street ?: continue
+            val len = (maneuverAlong.getOrElse(i + 1) { distance } - maneuverAlong[i]).coerceAtLeast(0.0)
+            val key = street.split(" / ").firstOrNull { Regex("""^[ABLKE] ?\d""").containsMatchIn(it) } ?: street.split(" / ").first()
+            lengths[key] = (lengths[key] ?: 0.0) + len
+        }
+        lengths.entries.sortedByDescending { it.value }.take(2).joinToString(", ") { it.key }
+    }
+
+    /** True when this route runs (almost) the same way as [other]. */
+    fun similarTo(other: Route): Boolean =
+        kotlin.math.abs(distance - other.distance) < 300 && kotlin.math.abs(duration - other.duration) < 60
 
     /** Seconds still to drive when [along] metres of the route are done. */
     fun remainingTime(along: Double): Double {
@@ -90,30 +118,48 @@ data class RouteOptions(
 )
 
 object Routing {
-    /** Picks the engine: TomTom when a key is available (traffic-aware), Valhalla otherwise. */
-    fun route(from: GeoPoint, to: GeoPoint, engine: RoutingEngine, tomtomKey: String, options: RouteOptions): Route {
+    /**
+     * Routes through [stops] (start, intermediate stops…, destination). Picks TomTom when a key is available
+     * (traffic-aware), Valhalla otherwise. With [alternatives] > 0 and no intermediate stops up to that many
+     * extra routes are returned; the first route is always the fastest.
+     */
+    fun routes(stops: List<GeoPoint>, engine: RoutingEngine, tomtomKey: String, options: RouteOptions, alternatives: Int = 0): List<Route> {
+        require(stops.size >= 2)
+        val alt = if (stops.size == 2) alternatives else 0
         val useTomTom = tomtomKey.isNotBlank() && engine != RoutingEngine.VALHALLA
-        return if (useTomTom) {
+        val list = if (useTomTom) {
             try {
-                tomtom(from, to, tomtomKey, options)
+                tomtom(stops, tomtomKey, options, alt)
             } catch (e: Exception) {
                 if (engine == RoutingEngine.TOMTOM) throw e
-                valhalla(from, to, options)
+                valhalla(stops, options, alt)
             }
         } else {
-            valhalla(from, to, options)
+            valhalla(stops, options, alt)
         }
+        // Fastest first, drop near-duplicates.
+        val sorted = list.sortedBy { it.duration }
+        val out = ArrayList<Route>()
+        for (r in sorted) if (out.none { it.similarTo(r) }) out += r
+        return out
     }
+
+    fun route(stops: List<GeoPoint>, engine: RoutingEngine, tomtomKey: String, options: RouteOptions): Route =
+        routes(stops, engine, tomtomKey, options, 0).first()
 
     // ------------------------------------------------------------------ Valhalla
 
     private const val VALHALLA = "https://valhalla1.openstreetmap.de/route"
 
-    fun valhalla(from: GeoPoint, to: GeoPoint, options: RouteOptions): Route {
-        val start = JSONObject().put("lat", from.lat).put("lon", from.lon).put("type", "break")
-        options.heading?.let { start.put("heading", it.toInt()).put("heading_tolerance", 60) }
+    fun valhalla(stops: List<GeoPoint>, options: RouteOptions, alternatives: Int): List<Route> {
+        val locations = JSONArray()
+        stops.forEachIndexed { i, p ->
+            val loc = JSONObject().put("lat", p.lat).put("lon", p.lon).put("type", "break")
+            if (i == 0) options.heading?.let { loc.put("heading", it.toInt()).put("heading_tolerance", 60) }
+            locations.put(loc)
+        }
         val body = JSONObject()
-            .put("locations", JSONArray().put(start).put(JSONObject().put("lat", to.lat).put("lon", to.lon).put("type", "break")))
+            .put("locations", locations)
             .put("costing", "auto")
             .put(
                 "costing_options",
@@ -127,13 +173,26 @@ object Routing {
             .put("units", "kilometers")
             .put("language", "de-DE")
             .put("directions_options", JSONObject().put("units", "kilometers").put("language", "de-DE"))
+        if (alternatives > 0) body.put("alternates", alternatives)
         val text = try {
             Http.post(VALHALLA, body.toString(), "application/json")
         } catch (e: HttpException) {
             val msg = runCatching { JSONObject(e.body).optString("error") }.getOrNull()
             throw RoutingException(if (msg.isNullOrBlank()) "Keine Route gefunden (${e.code})" else "Keine Route: $msg")
         }
-        val trip = JSONObject(text).getJSONObject("trip")
+        val json = JSONObject(text)
+        val waypoints = stops.subList(1, stops.size - 1)
+        val out = arrayListOf(valhallaTrip(json.getJSONObject("trip"), waypoints))
+        val alts = json.optJSONArray("alternates")
+        if (alts != null) {
+            for (i in 0 until alts.length()) {
+                runCatching { out += valhallaTrip(alts.getJSONObject(i).getJSONObject("trip"), waypoints) }
+            }
+        }
+        return out
+    }
+
+    private fun valhallaTrip(trip: JSONObject, waypoints: List<GeoPoint>): Route {
         val legs = trip.getJSONArray("legs")
         val points = ArrayList<GeoPoint>()
         val maneuvers = ArrayList<Maneuver>()
@@ -171,7 +230,7 @@ object Routing {
         marks += points.size - 1
         val line = Polyline(points)
         val duration = trip.optJSONObject("summary")?.optDouble("time", times.sum()) ?: times.sum()
-        return Route(points, maneuvers, duration, 0.0, "Valhalla", Route.timeProfile(line, marks, times))
+        return Route(points, maneuvers, duration, 0.0, "Valhalla", Route.timeProfile(line, marks, times), waypoints)
     }
 
     private fun valhallaKind(type: Int) = when (type) {
@@ -196,11 +255,12 @@ object Routing {
 
     // ------------------------------------------------------------------ TomTom
 
-    fun tomtom(from: GeoPoint, to: GeoPoint, key: String, options: RouteOptions): Route {
+    fun tomtom(stops: List<GeoPoint>, key: String, options: RouteOptions, alternatives: Int = 0): List<Route> {
         val sb = StringBuilder("https://api.tomtom.com/routing/1/calculateRoute/")
-            .append("${from.lat},${from.lon}:${to.lat},${to.lon}/json")
+            .append(stops.joinToString(":") { "${it.lat},${it.lon}" }).append("/json")
             .append("?key=").append(Http.enc(key))
             .append("&traffic=true&travelMode=car&routeType=fastest&instructionsType=text&language=de-DE")
+        if (alternatives > 0) sb.append("&maxAlternatives=").append(alternatives)
         options.heading?.let { sb.append("&vehicleHeading=").append(it.toInt().coerceIn(0, 359)) }
         if (options.avoidTolls) sb.append("&avoid=tollRoads")
         if (options.avoidMotorways) sb.append("&avoid=motorways")
@@ -214,7 +274,12 @@ object Routing {
                 },
             )
         }
-        val route = JSONObject(text).getJSONArray("routes").getJSONObject(0)
+        val routes = JSONObject(text).getJSONArray("routes")
+        val waypoints = stops.subList(1, stops.size - 1)
+        return (0 until routes.length()).map { tomtomRoute(routes.getJSONObject(it), waypoints) }
+    }
+
+    private fun tomtomRoute(route: JSONObject, waypoints: List<GeoPoint>): Route {
         val summary = route.getJSONObject("summary")
         val points = ArrayList<GeoPoint>()
         val legs = route.getJSONArray("legs")
@@ -255,6 +320,7 @@ object Routing {
         return Route(
             points, maneuvers, duration, summary.optDouble("trafficDelayInSeconds", 0.0), "TomTom",
             Route.timeProfile(line, firstMarks, firstDeltas),
+            waypoints,
         )
     }
 

@@ -96,6 +96,9 @@ dependencies {
     implementation("androidx.datastore:datastore-preferences:1.1.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 
+    // Android Auto
+    implementation("androidx.car.app:app:1.4.0")
+
     // Map rendering (OpenStreetMap vector tiles)
     implementation("org.maplibre.gl:android-sdk:11.13.5")
 

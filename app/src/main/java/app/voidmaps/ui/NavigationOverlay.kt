@@ -19,12 +19,14 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.VolumeOff
-import androidx.compose.material.icons.automirrored.outlined.VolumeUp
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Explore
+import androidx.compose.material.icons.outlined.Map
 import androidx.compose.material.icons.outlined.MyLocation
-import androidx.compose.material.icons.outlined.Traffic
+import androidx.compose.material.icons.outlined.Navigation
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -38,6 +40,7 @@ import androidx.compose.ui.unit.dp
 import app.voidmaps.data.AppSettings
 import app.voidmaps.data.Format
 import app.voidmaps.data.HazardType
+import app.voidmaps.data.NavView
 import app.voidmaps.nav.NavState
 import app.voidmaps.nav.Navigator
 import app.voidmaps.ui.theme.VoidTheme
@@ -50,6 +53,10 @@ fun NavigationOverlay(vm: MainViewModel, settings: AppSettings, s: NavState) {
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.statusBarsPadding().padding(horizontal = 12.dp, vertical = 8.dp)) {
             ManeuverCard(s)
+            s.faster?.let { f ->
+                Spacer(Modifier.height(8.dp))
+                FasterRouteCard(f.savedSeconds, onAccept = { Navigator.acceptFaster() }, onDecline = { Navigator.declineFaster() })
+            }
             s.warning?.let { w ->
                 Spacer(Modifier.height(8.dp))
                 WarningBanner(w.hazard.type, w.hazard.description, w.distance)
@@ -57,38 +64,70 @@ fun NavigationOverlay(vm: MainViewModel, settings: AppSettings, s: NavState) {
         }
 
         Column(
-            Modifier.align(Alignment.CenterEnd).padding(end = 12.dp, top = 120.dp),
+            Modifier.align(Alignment.CenterEnd).padding(end = 12.dp, top = 160.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            MapButton(
-                if (settings.voice) Icons.AutoMirrored.Outlined.VolumeUp else Icons.AutoMirrored.Outlined.VolumeOff,
-                "Sprachansagen",
-                onClick = {
-                    val on = !settings.voice
-                    vm.update { setVoice(on) }
-                    Navigator.onVoiceChanged(on)
-                },
-                active = settings.voice,
-            )
-            if (settings.hasTraffic) {
-                MapButton(Icons.Outlined.Traffic, "Verkehr", onClick = {
-                    val on = !settings.trafficLayer
-                    vm.update { setTraffic(on) }
-                }, active = settings.trafficLayer)
+            VoiceButton(vm, settings.voiceMode)
+            val (icon, label) = when (settings.navView) {
+                NavView.HEADING -> Icons.Outlined.Navigation to "Route oben"
+                NavView.NORTH -> Icons.Outlined.Explore to "Norden oben"
+                NavView.OVERVIEW -> Icons.Outlined.Map to "Übersicht"
             }
-            SpeedCameraButton(vm, settings)
+            MapButton(icon, "Ausrichtung: $label", onClick = { vm.cycleNavView() }, active = settings.navView != NavView.HEADING)
+            MapButton(Icons.Outlined.Search, "Zwischenziel oder Sonderziel suchen", onClick = { vm.openSearch(Pick.STOP) })
         }
 
         Column(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(12.dp)) {
             Row(verticalAlignment = Alignment.Bottom, modifier = Modifier.fillMaxWidth()) {
                 SpeedBubble(s.speedKmh)
                 Spacer(Modifier.weight(1f))
-                if (!vm.following) {
-                    MapButton(Icons.Outlined.MyLocation, "Zentrieren", onClick = { vm.following = true })
+                if (!vm.following || settings.navView == NavView.OVERVIEW) {
+                    MapButton(Icons.Outlined.MyLocation, "Zentrieren", onClick = {
+                        if (settings.navView == NavView.OVERVIEW) vm.cycleNavView()
+                        vm.following = true
+                    })
                 }
             }
             Spacer(Modifier.height(10.dp))
+            val nextStop = s.stops.firstOrNull()
+            if (nextStop != null && s.nextStopDistance != null && !s.arrived) {
+                StopBar(nextStop.name, s.nextStopDistance, s.stops.size) { Navigator.removeStop(nextStop) }
+                Spacer(Modifier.height(8.dp))
+            }
             if (s.arrived) ArrivedBar(s) { vm.stopNavigation() } else BottomBar(s) { vm.stopNavigation() }
+        }
+    }
+}
+
+@Composable
+private fun FasterRouteCard(saved: Double, onAccept: () -> Unit, onDecline: () -> Unit) {
+    val c = VoidTheme.colors
+    MapCard(Modifier.fillMaxWidth()) {
+        Row(Modifier.padding(start = 18.dp, end = 10.dp, top = 12.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Label("Schnellere Route", color = c.accent)
+                Text("${(saved / 60).toInt().coerceAtLeast(1)} MIN SCHNELLER", style = dotNumber(20), color = c.text)
+            }
+            Pill("Ablehnen", selected = false, onClick = onDecline)
+            Spacer(Modifier.width(8.dp))
+            Pill("Annehmen", selected = true, onClick = onAccept, filledColor = c.accent)
+        }
+    }
+}
+
+@Composable
+private fun StopBar(name: String, distance: Double, count: Int, onSkip: () -> Unit) {
+    val c = VoidTheme.colors
+    MapCard(Modifier.fillMaxWidth()) {
+        Row(Modifier.padding(start = 18.dp, end = 6.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(10.dp).clip(CircleShape).border(2.dp, c.accent, CircleShape))
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Label(if (count > 1) "Zwischenziel 1 von $count" else "Zwischenziel")
+                Text(name, style = MaterialTheme.typography.bodyLarge, color = c.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            Text(Format.distance(distance).uppercase(), style = dotNumber(18), color = c.text)
+            IconButton(onClick = onSkip) { Icon(Icons.Outlined.Close, "Zwischenziel entfernen", tint = c.textMuted, modifier = Modifier.size(18.dp)) }
         }
     }
 }

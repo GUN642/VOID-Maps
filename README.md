@@ -7,11 +7,15 @@ Konzept und Entscheidungen: [docs/Uebergabe_Navi_App.md](docs/Uebergabe_Navi_App
 - **Karte:** OpenStreetMap-Vektorkacheln (OpenFreeMap, Schema OpenMapTiles), gerendert mit MapLibre Native, eigener Kartenstil
 - **Drei Designs:** *Void* (schwarz, Grautöne, rote Akzente, Dot-Matrix), *Hell* (Papier-Weiß) und *Farbe* (farbige Karte, violette Route) – plus *Auto* (folgt dem Dunkelmodus des Systems)
 - **GPS:** Position mit Fahrtrichtung, Karte dreht in Fahrtrichtung (abschaltbar), 3D-Ansicht in der Navigation
-- **Suche:** Adressen, Orte und Koordinaten über Photon; Zuhause/Arbeit, Verlauf; langer Druck auf die Karte setzt ein Ziel; `geo:`-Links aus anderen Apps
-- **Routing:** Valhalla (OSM, ohne Schlüssel) oder TomTom (mit Live-Verkehr); Maut/Autobahn vermeiden
-- **Navigation:** Abbiegehinweise, deutsche Sprachansagen (Musik wird leiser), Neuberechnung bei Abweichung, Ankunftszeit, Hinweis auf schnellere Route bei Stau, läuft im Hintergrund weiter
+- **Suche:** mit TomTom-Schlüssel schnelle TomTom-Suche, sonst Photon; Treffer aus Favoriten/Verlauf sofort; die 5 zuletzt gesuchten Ziele; Zuhause/Arbeit; langer Druck auf die Karte setzt ein Ziel; `geo:`-Links aus anderen Apps
+- **Sonderziele:** Tankstelle, Ladestation, Parkplatz, Rastplatz, Supermarkt, Restaurant, Café, Apotheke, Krankenhaus, Hotel, Werkstatt u. a. – in der Nähe oder während der Navigation entlang der Route
+- **Routing:** immer bis zu 3 Routen zur Auswahl, die schnellste ist vorausgewählt und startet nach 5 Sekunden ohne Eingabe; Zwischenziele; Valhalla (OSM) oder TomTom (Live-Verkehr); Maut/Autobahn vermeiden
+- **Navigation:** Abbiegehinweise, Sprachansagen (kurz oder ausführlich, Kurzansagen standardmäßig an), Knopf für Laut / Nur Warnungen / Stumm, Ausrichtung Route oben / Norden oben / Übersicht, Neuberechnung bei Abweichung, regelmäßige Suche nach schnelleren Routen mit Annehmen/Ablehnen, läuft im Hintergrund weiter
+- **Ladesäulen:** Tesla, EnBW, Ionity und EWE Go aus OpenStreetMap, einzeln wählbar
+- **Offline-Karten:** Bereich auf der Karte wählen und herunterladen (Suche und Routing brauchen weiter Internet)
+- **Android Auto:** Karte, Abbiegehinweise und Ankunftszeit im Auto-Display, Zielsuche und Favoriten
 - **Verkehr (TomTom):** Verkehrslage als Overlay in den Farben des Designs (oder TomTom-Originalfarben), Unfälle, Stauenden, Baustellen und Sperrungen auf der Karte und als Warnung mit Ansage entlang der Route
-- **Blitzer:** feste Anlagen aus OSM (`highway=speed_camera`), **standardmäßig AUS**, Schalter in den Einstellungen und als Schnellschalter auf der Karte. Ist er aus, werden keine Blitzerdaten geladen, gezeigt oder angesagt (§ 23 Abs. 1c StVO beachten)
+- **Blitzer:** feste Anlagen aus OSM (`highway=speed_camera`), **standardmäßig AUS**, Schalter im Menü (Einstellungen). Ist er aus, werden keine Blitzerdaten geladen, gezeigt oder angesagt (§ 23 Abs. 1c StVO beachten)
 - **Updates:** automatische Prüfung beim Start gegen die GitHub-Releases, Changelog, Download und Installation direkt aus der App
 
 ## APK herunterladen
@@ -43,8 +47,8 @@ Für einen privaten Schlüssel die Secrets `VOID_KEYSTORE_BASE64`, `VOID_KEYSTOR
 | M3 Turn-by-Turn, Ansagen, Neuberechnung, Ankunftszeit | umgesetzt |
 | M4 Verkehr (Flow, Incidents, staubewusste Route) | umgesetzt, braucht TomTom-Schlüssel |
 | M5 Warnungen und Blitzer-Schalter | umgesetzt |
-| M6 Android Auto | offen |
-| M7 Offline | offen |
+| M6 Android Auto | umgesetzt (Sideload: in Android Auto die Entwickleroptionen öffnen und „Unbekannte Quellen“ aktivieren) |
+| M7 Offline | Karten umgesetzt, Offline-Routing offen |
 
 ## Quellen & Lizenzen
 Kartendaten © OpenStreetMap-Mitwirkende (ODbL) · Kacheln OpenFreeMap / OpenMapTiles · MapLibre Native (BSD) ·

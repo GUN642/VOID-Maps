@@ -29,6 +29,8 @@ data class MapPalette(
     val place: String,
     val route: String,
     val routeCasing: String,
+    /** Alternative routes in the preview. */
+    val routeAlt: String,
     val trafficFree: String?,
     val trafficSlow: String,
     val trafficHeavy: String,
@@ -63,6 +65,7 @@ object Palettes {
         place = "#E8E8E8",
         route = "#D71921",
         routeCasing = "#3A0407",
+        routeAlt = "#4E4E4E",
         trafficFree = null,
         trafficSlow = "#FFB800",
         trafficHeavy = "#FF5A1F",
@@ -95,6 +98,7 @@ object Palettes {
         place = "#111111",
         route = "#D71921",
         routeCasing = "#FFFFFF",
+        routeAlt = "#A3A3A0",
         trafficFree = null,
         trafficSlow = "#F2A900",
         trafficHeavy = "#F25A1F",
@@ -127,6 +131,7 @@ object Palettes {
         place = "#251E3D",
         route = "#6C3BFF",
         routeCasing = "#2E1294",
+        routeAlt = "#A99BE0",
         trafficFree = "#2ECC71",
         trafficSlow = "#FFB300",
         trafficHeavy = "#FF5722",
@@ -150,6 +155,7 @@ object MapStyle {
     const val HAZARDS = "hazards"
     const val HAZARD_LINES = "hazard-lines"
     const val DEST = "dest"
+    const val POIS = "pois"
     const val LABEL_ANCHOR = "place-village"
 
     private const val TILES = "https://tiles.openfreemap.org/planet"
@@ -177,6 +183,7 @@ object MapStyle {
             HAZARDS to mapOf("type" to "geojson", "data" to EMPTY),
             HAZARD_LINES to mapOf("type" to "geojson", "data" to EMPTY),
             DEST to mapOf("type" to "geojson", "data" to EMPTY),
+            POIS to mapOf("type" to "geojson", "data" to EMPTY),
         )
         val showTraffic = c.traffic && c.tomtomKey.isNotBlank()
         if (showTraffic) {
@@ -266,14 +273,26 @@ object MapStyle {
 
         if (showTraffic) layers += trafficLayer(p, c.trafficOriginal)
 
-        // Route and hazards sit above the roads but below the labels.
+        // Route and hazards sit above the roads but below the labels. Alternatives (sel = 0) are drawn first.
+        val alt = listOf("==", listOf("get", "sel"), 0)
+        val sel = listOf("==", listOf("get", "sel"), 1)
         layers += mapOf(
-            "id" to "route-casing", "type" to "line", "source" to ROUTE,
+            "id" to "route-alt-casing", "type" to "line", "source" to ROUTE, "filter" to alt,
+            "layout" to mapOf("line-cap" to "round", "line-join" to "round"),
+            "paint" to mapOf("line-color" to p.background, "line-width" to zoomExp(5, 4, 12, 8, 16, 14, 18, 24)),
+        )
+        layers += mapOf(
+            "id" to "route-alt", "type" to "line", "source" to ROUTE, "filter" to alt,
+            "layout" to mapOf("line-cap" to "round", "line-join" to "round"),
+            "paint" to mapOf("line-color" to p.routeAlt, "line-width" to zoomExp(5, 2.5, 12, 5, 16, 9, 18, 16)),
+        )
+        layers += mapOf(
+            "id" to "route-casing", "type" to "line", "source" to ROUTE, "filter" to sel,
             "layout" to mapOf("line-cap" to "round", "line-join" to "round"),
             "paint" to mapOf("line-color" to p.routeCasing, "line-width" to zoomExp(5, 5, 12, 9, 16, 16, 18, 28)),
         )
         layers += mapOf(
-            "id" to "route-line", "type" to "line", "source" to ROUTE,
+            "id" to "route-line", "type" to "line", "source" to ROUTE, "filter" to sel,
             "layout" to mapOf("line-cap" to "round", "line-join" to "round"),
             "paint" to mapOf("line-color" to p.route, "line-width" to zoomExp(5, 3, 12, 6, 16, 11, 18, 20)),
         )
@@ -322,8 +341,16 @@ object MapStyle {
             ),
         )
         layers += mapOf(
+            "id" to "poi-icons", "type" to "symbol", "source" to POIS, "minzoom" to 7,
+            "layout" to mapOf(
+                "icon-image" to listOf("get", "icon"),
+                "icon-allow-overlap" to true,
+                "icon-size" to listOf("interpolate", listOf("linear"), listOf("zoom"), 7, 0.55, 13, 1.0),
+            ),
+        )
+        layers += mapOf(
             "id" to "dest-icon", "type" to "symbol", "source" to DEST,
-            "layout" to mapOf("icon-image" to "dest", "icon-allow-overlap" to true, "icon-ignore-placement" to true, "icon-anchor" to "center"),
+            "layout" to mapOf("icon-image" to listOf("get", "icon"), "icon-allow-overlap" to true, "icon-ignore-placement" to true, "icon-anchor" to "center"),
         )
 
         val style = mapOf(
@@ -335,6 +362,31 @@ object MapStyle {
         )
         return JSONObject(style).toString()
     }
+
+    /**
+     * Minimal style used as the definition of offline downloads: it references the same tile source and
+     * fonts as the real styles, so downloaded tiles and glyphs are found again by every design.
+     */
+    fun offlineStyle(): String = JSONObject(
+        mapOf(
+            "version" to 8,
+            "name" to "VOID offline",
+            "glyphs" to GLYPHS,
+            "sources" to mapOf("omt" to mapOf("type" to "vector", "url" to TILES)),
+            "layers" to listOf(
+                mapOf("id" to "background", "type" to "background", "paint" to mapOf("background-color" to "#000000")),
+                mapOf("id" to "water", "type" to "fill", "source" to "omt", "source-layer" to "water"),
+                mapOf(
+                    "id" to "labels-regular", "type" to "symbol", "source" to "omt", "source-layer" to "place",
+                    "layout" to mapOf("text-field" to name, "text-font" to REGULAR),
+                ),
+                mapOf(
+                    "id" to "labels-bold", "type" to "symbol", "source" to "omt", "source-layer" to "transportation_name",
+                    "layout" to mapOf("text-field" to listOf("get", "ref"), "text-font" to BOLD),
+                ),
+            ),
+        ),
+    ).toString()
 
     /** Widens the stop values of a zoom interpolation (used for road casings). */
     private fun scaleWidth(expr: List<Any>, add: Double, factor: Double): List<Any> {

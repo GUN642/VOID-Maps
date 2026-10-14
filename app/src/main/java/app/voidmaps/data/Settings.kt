@@ -19,12 +19,29 @@ enum class ThemeChoice(val label: String) {
     AUTO("Auto"),
 }
 
+/** Voice output: silent, only hazard warnings, or full guidance. */
+enum class VoiceMode(val label: String) {
+    OFF("Stumm"),
+    WARNINGS("Nur Warnungen"),
+    ALL("Laut"),
+}
+
+/** Map orientation during navigation. */
+enum class NavView(val label: String) {
+    HEADING("Route oben"),
+    NORTH("Norden oben"),
+    OVERVIEW("Übersicht"),
+}
+
 data class AppSettings(
     val theme: ThemeChoice = ThemeChoice.VOID,
     val dotHeadings: Boolean = true,
-    val voice: Boolean = true,
+    val voiceMode: VoiceMode = VoiceMode.ALL,
+    /** Compact announcements ("In 300 Metern rechts abbiegen"). On by default. */
+    val shortAnnouncements: Boolean = true,
     val tilt3d: Boolean = true,
     val headingUp: Boolean = true,
+    val navView: NavView = NavView.HEADING,
     val routing: RoutingEngine = RoutingEngine.AUTO,
     val avoidTolls: Boolean = false,
     val avoidMotorways: Boolean = false,
@@ -32,6 +49,8 @@ data class AppSettings(
     val trafficOriginalColors: Boolean = false,
     /** Speed camera layer. Off by default – see § 23 Abs. 1c StVO. */
     val speedCameras: Boolean = false,
+    val chargers: Boolean = false,
+    val chargerOperators: Set<ChargeOperator> = ChargeOperator.entries.toSet(),
     val tomtomKeyInput: String = "",
     val autoUpdateCheck: Boolean = true,
     val recents: List<Place> = emptyList(),
@@ -54,14 +73,19 @@ class SettingsRepository(private val context: Context) {
         val theme = stringPreferencesKey("theme")
         val dotHeadings = booleanPreferencesKey("dot_headings")
         val voice = booleanPreferencesKey("voice")
+        val voiceMode = stringPreferencesKey("voice_mode")
+        val shortAnnouncements = booleanPreferencesKey("short_announcements")
         val tilt = booleanPreferencesKey("tilt3d")
         val headingUp = booleanPreferencesKey("heading_up")
+        val navView = stringPreferencesKey("nav_view")
         val routing = stringPreferencesKey("routing")
         val avoidTolls = booleanPreferencesKey("avoid_tolls")
         val avoidMotorways = booleanPreferencesKey("avoid_motorways")
         val traffic = booleanPreferencesKey("traffic")
         val trafficOriginal = booleanPreferencesKey("traffic_original")
         val cameras = booleanPreferencesKey("speed_cameras")
+        val chargers = booleanPreferencesKey("chargers")
+        val chargerOperators = stringPreferencesKey("charger_operators")
         val tomtomKey = stringPreferencesKey("tomtom_key")
         val autoUpdate = booleanPreferencesKey("auto_update")
         val recents = stringPreferencesKey("recents")
@@ -81,15 +105,22 @@ class SettingsRepository(private val context: Context) {
         AppSettings(
             theme = p.enum(K.theme, d.theme),
             dotHeadings = p[K.dotHeadings] ?: d.dotHeadings,
-            voice = p[K.voice] ?: d.voice,
+            // Older versions stored a plain on/off switch.
+            voiceMode = p.enum(K.voiceMode, if (p[K.voice] == false) VoiceMode.OFF else d.voiceMode),
+            shortAnnouncements = p[K.shortAnnouncements] ?: d.shortAnnouncements,
             tilt3d = p[K.tilt] ?: d.tilt3d,
             headingUp = p[K.headingUp] ?: d.headingUp,
+            navView = p.enum(K.navView, d.navView),
             routing = p.enum(K.routing, d.routing),
             avoidTolls = p[K.avoidTolls] ?: d.avoidTolls,
             avoidMotorways = p[K.avoidMotorways] ?: d.avoidMotorways,
             trafficLayer = p[K.traffic] ?: d.trafficLayer,
             trafficOriginalColors = p[K.trafficOriginal] ?: d.trafficOriginalColors,
             speedCameras = p[K.cameras] ?: d.speedCameras,
+            chargers = p[K.chargers] ?: d.chargers,
+            chargerOperators = p[K.chargerOperators]?.split(',')
+                ?.mapNotNull { v -> ChargeOperator.entries.firstOrNull { it.name == v } }?.toSet()
+                ?: d.chargerOperators,
             tomtomKeyInput = p[K.tomtomKey] ?: d.tomtomKeyInput,
             autoUpdateCheck = p[K.autoUpdate] ?: d.autoUpdateCheck,
             recents = p[K.recents]?.split('\n')?.mapNotNull { Place.decode(it) } ?: emptyList(),
@@ -104,15 +135,20 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setTheme(v: ThemeChoice) = context.dataStore.edit { it[K.theme] = v.name }
     suspend fun setDotHeadings(v: Boolean) = context.dataStore.edit { it[K.dotHeadings] = v }
-    suspend fun setVoice(v: Boolean) = context.dataStore.edit { it[K.voice] = v }
+    suspend fun setVoiceMode(v: VoiceMode) = context.dataStore.edit { it[K.voiceMode] = v.name }
+    suspend fun setShortAnnouncements(v: Boolean) = context.dataStore.edit { it[K.shortAnnouncements] = v }
     suspend fun setTilt(v: Boolean) = context.dataStore.edit { it[K.tilt] = v }
     suspend fun setHeadingUp(v: Boolean) = context.dataStore.edit { it[K.headingUp] = v }
+    suspend fun setNavView(v: NavView) = context.dataStore.edit { it[K.navView] = v.name }
     suspend fun setRouting(v: RoutingEngine) = context.dataStore.edit { it[K.routing] = v.name }
     suspend fun setAvoidTolls(v: Boolean) = context.dataStore.edit { it[K.avoidTolls] = v }
     suspend fun setAvoidMotorways(v: Boolean) = context.dataStore.edit { it[K.avoidMotorways] = v }
     suspend fun setTraffic(v: Boolean) = context.dataStore.edit { it[K.traffic] = v }
     suspend fun setTrafficOriginal(v: Boolean) = context.dataStore.edit { it[K.trafficOriginal] = v }
     suspend fun setSpeedCameras(v: Boolean) = context.dataStore.edit { it[K.cameras] = v }
+    suspend fun setChargers(v: Boolean) = context.dataStore.edit { it[K.chargers] = v }
+    suspend fun setChargerOperators(v: Set<ChargeOperator>) =
+        context.dataStore.edit { it[K.chargerOperators] = v.joinToString(",") { o -> o.name } }
     suspend fun setTomTomKey(v: String) = context.dataStore.edit { it[K.tomtomKey] = v.trim() }
     suspend fun setAutoUpdate(v: Boolean) = context.dataStore.edit { it[K.autoUpdate] = v }
     suspend fun setHome(p: Place?) = context.dataStore.edit { if (p == null) it.remove(K.home) else it[K.home] = p.encode() }
@@ -125,10 +161,11 @@ class SettingsRepository(private val context: Context) {
         it[K.lastZoom] = zoom.toString()
     }
 
+    /** Remembers a searched place; the search shows the five most recent ones. */
     suspend fun addRecent(place: Place) = context.dataStore.edit {
         val cur = it[K.recents]?.split('\n')?.mapNotNull { s -> Place.decode(s) } ?: emptyList()
         val next = listOf(place) + cur.filterNot { r -> r.name == place.name && Geo.distance(r.point, place.point) < 50 }
-        it[K.recents] = next.take(12).joinToString("\n") { r -> r.encode() }
+        it[K.recents] = next.take(5).joinToString("\n") { r -> r.encode() }
     }
 
     suspend fun removeRecent(place: Place) = context.dataStore.edit {

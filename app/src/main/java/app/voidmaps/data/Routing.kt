@@ -27,6 +27,9 @@ enum class LaneDir { STRAIGHT, SLIGHT_RIGHT, RIGHT, SHARP_RIGHT, SLIGHT_LEFT, LE
 /** One lane: where it leads and whether the route continues on it. */
 data class Lane(val directions: List<LaneDir>, val recommended: Boolean, val follow: LaneDir?)
 
+/** Slow traffic on the route: level 1 = slow, 2 = queuing, 3 = standing / closed; works = roadworks. */
+data class TrafficSpan(val startAlong: Double, val endAlong: Double, val level: Int, val works: Boolean = false, val delay: Int = 0)
+
 /** Lanes shown before a junction, between two points of the route. */
 data class LaneSection(val startIndex: Int, val endIndex: Int, val lanes: List<Lane>)
 
@@ -44,10 +47,20 @@ class Route(
     val waypoints: List<GeoPoint> = emptyList(),
     /** Lane guidance (only from TomTom routing). */
     val laneSections: List<LaneSection> = emptyList(),
+    /** Traffic sections as point indices (only from TomTom routing): start, end, level, works, delay. */
+    trafficIndices: List<IntArray> = emptyList(),
 ) {
     val line = Polyline(points)
     val distance: Double get() = line.length
     val maneuverAlong: DoubleArray = DoubleArray(maneuvers.size) { line.cumulative[maneuvers[it].pointIndex.coerceIn(0, points.size - 1)] }
+
+    /** Jams and roadworks along the route (TomTom). */
+    val traffic: List<TrafficSpan> = trafficIndices.map { t ->
+        TrafficSpan(
+            line.cumulative[t[0].coerceIn(0, points.size - 1)], line.cumulative[t[1].coerceIn(0, points.size - 1)],
+            t[2], t[3] == 1, t[4],
+        )
+    }
 
     /** Start and end (metres along the route) of each lane section. */
     val laneAlong: List<Pair<Double, Double>> = laneSections.map {
@@ -286,7 +299,7 @@ object Routing {
             .append("?key=").append(Http.enc(key))
             .append("&traffic=true&travelMode=car&routeType=fastest&instructionsType=text&language=de-DE")
         if (alternatives > 0) sb.append("&maxAlternatives=").append(alternatives)
-        sb.append("&sectionType=lanes")
+        sb.append("&sectionType=lanes&sectionType=traffic")
         options.heading?.let { sb.append("&vehicleHeading=").append(it.toInt().coerceIn(0, 359)) }
         if (options.avoidTolls) sb.append("&avoid=tollRoads")
         if (options.avoidMotorways) sb.append("&avoid=motorways")
@@ -348,7 +361,33 @@ object Routing {
             Route.timeProfile(line, firstMarks, firstDeltas),
             waypoints,
             parseLanes(route.optJSONArray("sections"), points.size),
+            parseTraffic(route.optJSONArray("sections"), points.size),
         )
+    }
+
+    private fun parseTraffic(sections: JSONArray?, size: Int): List<IntArray> {
+        if (sections == null) return emptyList()
+        val out = ArrayList<IntArray>()
+        for (i in 0 until sections.length()) {
+            val sec = sections.getJSONObject(i)
+            if (!sec.optString("sectionType").equals("TRAFFIC", ignoreCase = true)) continue
+            val cat = sec.optString("simpleCategory").uppercase()
+            val magnitude = sec.optInt("magnitudeOfDelay", 0)
+            val works = cat == "ROAD_WORK"
+            val level = when {
+                cat == "ROAD_CLOSURE" -> 3
+                works -> 1
+                magnitude >= 3 -> 3
+                magnitude == 2 -> 2
+                else -> 1
+            }
+            out += intArrayOf(
+                sec.optInt("startPointIndex").coerceIn(0, size - 1),
+                sec.optInt("endPointIndex").coerceIn(0, size - 1),
+                level, if (works) 1 else 0, sec.optInt("delayInSeconds", 0),
+            )
+        }
+        return out
     }
 
     private fun laneDir(s: String): LaneDir? = when (s.uppercase()) {

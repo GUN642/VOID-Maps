@@ -141,7 +141,7 @@ fun NavigationOverlay(vm: MainViewModel, settings: AppSettings, s: NavState, onT
             Spacer(Modifier.height(10.dp))
             val nextStop = s.stops.firstOrNull()
             if (nextStop != null && s.nextStopDistance != null && !s.arrived) {
-                StopBar(nextStop.name, s.nextStopDistance, s.stops.size) { Navigator.removeStop(nextStop) }
+                StopBar(nextStop.name, s.nextStopDistance, s.nextStopTime ?: 0.0, s.stops.size) { Navigator.removeStop(nextStop) }
                 Spacer(Modifier.height(8.dp))
             }
             if (s.arrived) ArrivedBar(s) { vm.stopNavigation() } else BottomBar(s) { vm.stopNavigation() }
@@ -166,7 +166,7 @@ private fun FasterRouteCard(saved: Double, onAccept: () -> Unit, onDecline: () -
 }
 
 @Composable
-private fun StopBar(name: String, distance: Double, count: Int, onSkip: () -> Unit) {
+private fun StopBar(name: String, distance: Double, seconds: Double, count: Int, onSkip: () -> Unit) {
     val c = VoidTheme.colors
     MapCard(Modifier.fillMaxWidth()) {
         Row(Modifier.padding(start = 18.dp, end = 6.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -176,7 +176,10 @@ private fun StopBar(name: String, distance: Double, count: Int, onSkip: () -> Un
                 Label(if (count > 1) "Zwischenziel 1 von $count" else "Zwischenziel")
                 Text(name, style = MaterialTheme.typography.bodyLarge, color = c.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            Text(Format.distance(distance).uppercase(), style = dotNumber(18), color = c.text)
+            Column(horizontalAlignment = Alignment.End) {
+                Text(Format.clock(System.currentTimeMillis() + (seconds * 1000).toLong()), style = dotNumber(18), color = c.accent)
+                Label("${Format.hhmm(seconds)} · ${Format.distance(distance)}")
+            }
             IconButton(onClick = onSkip) { Icon(Icons.Outlined.Close, "Zwischenziel entfernen", tint = c.textMuted, modifier = Modifier.size(18.dp)) }
         }
     }
@@ -343,6 +346,16 @@ private fun RouteProgressBar(s: NavState, settings: AppSettings, modifier: Modif
                     else -> c.warn
                 }
                 drawLine(color, Offset(cx, y((e.along - along).coerceAtLeast(0.0))), Offset(cx, y(end - along)), strokeWidth = w, cap = StrokeCap.Round)
+            }
+            s.route.traffic.forEach { t ->
+                if (t.endAlong <= along || t.startAlong - along > horizon) return@forEach
+                val color = when {
+                    t.works -> amber
+                    t.level >= 3 -> c.warn
+                    t.level == 2 -> heavy
+                    else -> amber
+                }
+                drawLine(color, Offset(cx, y((t.startAlong - along).coerceAtLeast(0.0))), Offset(cx, y(t.endAlong - along)), strokeWidth = w, cap = StrokeCap.Round)
             }
             stopsAhead.forEach { a ->
                 drawCircle(c.surface, 7.dp.toPx(), Offset(cx, y(a - along)))

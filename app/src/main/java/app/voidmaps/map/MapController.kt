@@ -53,6 +53,7 @@ class MapController(private val context: Context) {
     private var destJson: String = EMPTY
     private var poiJson: String = EMPTY
     private var signalJson: String = EMPTY
+    private var routeTrafficJson: String = EMPTY
     private var hazardById: Map<String, Hazard> = emptyMap()
     private var poiById: Map<String, Poi> = emptyMap()
 
@@ -284,6 +285,15 @@ class MapController(private val context: Context) {
         push(MapStyle.POIS, poiJson)
     }
 
+    /** Coloured jam / roadworks stretches drawn on top of the route. */
+    fun setRouteTraffic(spans: List<Pair<List<GeoPoint>, app.voidmaps.data.TrafficSpan>>) {
+        val features = spans.filter { it.first.size >= 2 }.map { (pts, t) ->
+            lineFeature(pts, JSONObject().put("level", if (t.works) "works" else t.level.toString()))
+        }
+        routeTrafficJson = if (features.isEmpty()) EMPTY else featureCollection(features)
+        push(MapStyle.ROUTE_TRAFFIC, routeTrafficJson)
+    }
+
     fun setSignals(points: List<GeoPoint>) {
         signalJson = featureCollection(points.map { pointFeature(it, JSONObject()) })
         push(MapStyle.SIGNALS, signalJson)
@@ -341,6 +351,7 @@ class MapController(private val context: Context) {
         push(MapStyle.DEST, destJson)
         push(MapStyle.POIS, poiJson)
         push(MapStyle.SIGNALS, signalJson)
+        push(MapStyle.ROUTE_TRAFFIC, routeTrafficJson)
     }
 
     private fun push(source: String, json: String) {

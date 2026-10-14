@@ -192,6 +192,32 @@ fun MapScreen(vm: MainViewModel, settings: AppSettings, design: Design, hasPermi
             else -> controller.setRoute(null)
         }
     }
+    // Jams and roadworks beside the route: the route's own traffic sections plus jam incidents on it.
+    LaunchedEffect(mapReady, vm.mode, routes, vm.selectedRoute, nav?.routeVersion, nav?.snap?.segment, nav?.routeHazards) {
+        if (!mapReady) return@LaunchedEffect
+        val n = nav
+        val route = if (n != null && vm.mode != Mode.PREVIEW) n.route else vm.preview
+        if (route == null || (vm.mode != Mode.PREVIEW && vm.mode != Mode.NAVIGATE && vm.mode != Mode.SEARCH)) {
+            controller.setRouteTraffic(emptyList())
+            return@LaunchedEffect
+        }
+        val from = if (n != null && route === n.route) n.snap?.along ?: 0.0 else 0.0
+        val spans = route.traffic.toMutableList()
+        if (n != null && route === n.route) {
+            n.routeHazards.forEach { h ->
+                val end = h.endAlong ?: return@forEach
+                val level = when (h.hazard.type) {
+                    HazardType.JAM -> 2
+                    HazardType.CLOSURE -> 3
+                    else -> return@forEach
+                }
+                spans += app.voidmaps.data.TrafficSpan(h.along, end, level)
+            }
+        }
+        controller.setRouteTraffic(
+            spans.filter { it.endAlong > from }.map { route.line.slice(maxOf(it.startAlong, from), it.endAlong) to it },
+        )
+    }
     LaunchedEffect(mapReady, vm.destination, vm.stops, nav?.stops) {
         if (mapReady) controller.setDestination(vm.destination ?: nav?.destination, nav?.stops ?: vm.stops)
     }
@@ -405,11 +431,20 @@ private fun PreviewOverlay(vm: MainViewModel, settings: AppSettings, onTop: (Int
                 .onGloballyPositioned { onTop(it.boundsInRoot().bottom.toInt()) },
         ) {
             Column(Modifier.padding(start = 20.dp, end = 6.dp, top = 12.dp, bottom = 10.dp)) {
+                val sel = vm.preview
                 vm.stops.forEachIndexed { i, s ->
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Label("Zwischenziel ${i + 1}")
                             Text(s.name, style = MaterialTheme.typography.bodyLarge, color = c.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                        val wp = sel?.waypointAlong?.getOrNull(i)
+                        if (sel != null && wp != null) {
+                            val secs = (sel.duration - sel.remainingTime(wp)).coerceAtLeast(0.0)
+                            Column(horizontalAlignment = Alignment.End) {
+                                Text(Format.clock(System.currentTimeMillis() + (secs * 1000).toLong()), style = dotNumber(16), color = c.accent)
+                                Label(Format.hhmm(secs))
+                            }
                         }
                         IconButton(onClick = { vm.removeStop(s) }) { Icon(Icons.Outlined.Close, "Entfernen", tint = c.textMuted, modifier = Modifier.size(18.dp)) }
                     }

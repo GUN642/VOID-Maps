@@ -147,6 +147,7 @@ object MapStyle {
     const val HAZARD_LINES = "hazard-lines"
     const val DEST = "dest"
     const val POIS = "pois"
+    const val ROUTE_TRAFFIC = "route-traffic"
     const val SIGNALS = "signals"
     const val LABEL_ANCHOR = "place-village"
 
@@ -177,6 +178,7 @@ object MapStyle {
             HAZARD_LINES to mapOf("type" to "geojson", "data" to EMPTY),
             DEST to mapOf("type" to "geojson", "data" to EMPTY),
             POIS to mapOf("type" to "geojson", "data" to EMPTY),
+            ROUTE_TRAFFIC to mapOf("type" to "geojson", "data" to EMPTY),
             SIGNALS to mapOf("type" to "geojson", "data" to EMPTY),
         )
         if (c.satellite) {
@@ -369,12 +371,27 @@ object MapStyle {
             "layout" to mapOf("line-cap" to "round", "line-join" to "round"),
             "paint" to mapOf("line-color" to p.route, "line-width" to zoomExp(5, 3, 12, 6, 16, 11, 18, 20)),
         )
+        // Jams, roadworks and closures as a dotted line right beside the route (the red route stays readable).
+        layers += mapOf(
+            "id" to "route-traffic", "type" to "line", "source" to ROUTE_TRAFFIC,
+            "layout" to mapOf("line-cap" to "round", "line-join" to "round"),
+            "paint" to mapOf(
+                "line-color" to listOf(
+                    "match", listOf("get", "level"),
+                    "1", p.trafficSlow, "2", p.trafficHeavy, "works", "#FFB800", p.trafficStop,
+                ),
+                "line-width" to zoomExp(5, 3, 12, 5, 16, 8, 18, 12),
+                "line-offset" to zoomExp(5, 5, 12, 9, 16, 15, 18, 24),
+                "line-dasharray" to listOf(0.01, 1.8),
+            ),
+        )
         layers += mapOf(
             "id" to "hazard-lines", "type" to "line", "source" to HAZARD_LINES,
             "layout" to mapOf("line-cap" to "round", "line-join" to "round"),
             "paint" to mapOf(
                 "line-color" to p.warn, "line-opacity" to 0.85,
                 "line-width" to zoomExp(8, 2, 14, 4, 18, 8),
+                "line-offset" to zoomExp(5, 5, 12, 9, 16, 15, 18, 24),
                 "line-dasharray" to listOf(0.1, 2.2),
             ),
         )

@@ -63,6 +63,8 @@ data class NavState(
     val faster: FasterRoute? = null,
     /** Metres to the next intermediate stop, if there is one. */
     val nextStopDistance: Double? = null,
+    /** Seconds to the next intermediate stop. */
+    val nextStopTime: Double? = null,
     /** Lanes to use at the next junction, when the route has lane data. */
     val lanes: app.voidmaps.data.LaneSection? = null,
 ) {
@@ -257,6 +259,7 @@ object Navigator {
             say(if (short) "Zwischenziel erreicht." else "Sie haben Ihr Zwischenziel ${reached.name} erreicht.", Say.INFO, interrupt = true)
         }
         val nextStopDistance = wpAlong.getOrNull(passedStops)?.let { (it - along).coerceAtLeast(0.0) }
+        val nextStopTime = wpAlong.getOrNull(passedStops)?.let { (route.remainingTime(along) - route.remainingTime(it)).coerceAtLeast(0.0) }
 
         var next = s.next
         while (next < route.maneuvers.size - 1 && route.maneuverAlong[next] < along + 3) next++
@@ -284,6 +287,7 @@ object Navigator {
             warning = warning,
             faster = faster,
             nextStopDistance = nextStopDistance,
+            nextStopTime = nextStopTime,
             lanes = route.lanesAt(along, if (speed > 22) 900.0 else 450.0),
         )
         _state.value = updated

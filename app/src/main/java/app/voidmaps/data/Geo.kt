@@ -176,6 +176,32 @@ class Polyline(val points: List<GeoPoint>) {
         return search(0, points.size - 1)
     }
 
+    /** Point at [along] metres from the start. */
+    fun pointAt(along: Double): GeoPoint {
+        if (points.isEmpty()) return GeoPoint(0.0, 0.0)
+        val a = along.coerceIn(0.0, length)
+        var lo = 0
+        var hi = cumulative.size - 1
+        while (hi - lo > 1) {
+            val mid = (lo + hi) / 2
+            if (cumulative[mid] <= a) lo = mid else hi = mid
+        }
+        val span = cumulative[hi] - cumulative[lo]
+        val t = if (span <= 0) 0.0 else (a - cumulative[lo]) / span
+        val p = points[lo]
+        val q = points[hi]
+        return GeoPoint(p.lat + (q.lat - p.lat) * t, p.lon + (q.lon - p.lon) * t)
+    }
+
+    /** The part of the line between two distances. */
+    fun slice(from: Double, to: Double): List<GeoPoint> {
+        if (points.size < 2 || to <= from) return emptyList()
+        val out = arrayListOf(pointAt(from))
+        for (i in points.indices) if (cumulative[i] > from && cumulative[i] < to) out += points[i]
+        out += pointAt(to)
+        return out
+    }
+
     /** Points of the line from [along] metres onwards (for "rest of the route" rendering and queries). */
     fun remainder(fromSegment: Int, start: GeoPoint): List<GeoPoint> {
         if (points.isEmpty()) return emptyList()

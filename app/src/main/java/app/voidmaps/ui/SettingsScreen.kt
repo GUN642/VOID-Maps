@@ -103,6 +103,9 @@ fun SettingsScreen(vm: MainViewModel, s: AppSettings, onBack: () -> Unit) {
                     }
                 }
                 Spacer(Modifier.height(6.dp))
+                Toggle("Amtliche Luftbilder BW & Bayern", "20-cm-Orthofotos der Landesvermessung ab Straßenzoom, aktueller und schärfer", s.officialImagery) { v ->
+                    vm.update { setOfficialImagery(v) }
+                }
             }
             Toggle("3D-Gebäude", "Gebäude mit Höhe, sichtbar beim Neigen der Karte", s.buildings3d) { v -> vm.update { setBuildings3d(v) } }
             Toggle("Gelände-Relief", "Berge und Täler plastisch schattiert", s.terrain) { v -> vm.update { setTerrain(v) } }
@@ -143,7 +146,8 @@ fun SettingsScreen(vm: MainViewModel, s: AppSettings, onBack: () -> Unit) {
             KeyField(s.tomtomKeyInput) { vm.setTomTomKey(it) }
             Spacer(Modifier.height(6.dp))
             Text(
-                if (s.hasTraffic) "Schlüssel aktiv. Verkehrslage, Unfälle, Baustellen, Stauenden und Sperrungen werden geladen."
+                if (s.tomtomKeyInput.isBlank() && app.voidmaps.BuildConfig.TOMTOM_KEY.isNotBlank()) "Fest eingebauter Schlüssel aktiv. Ein eigener Schlüssel hier hat Vorrang."
+                else if (s.hasTraffic) "Schlüssel aktiv. Verkehrslage, Unfälle, Baustellen, Stauenden und Sperrungen werden geladen."
                 else "Kostenlosen Schlüssel auf developer.tomtom.com anlegen (Freemium reicht privat) und hier einfügen.",
                 color = if (s.hasTraffic) c.text else c.textMuted, style = MaterialTheme.typography.bodyMedium,
             )
@@ -191,7 +195,8 @@ fun SettingsScreen(vm: MainViewModel, s: AppSettings, onBack: () -> Unit) {
             Text(
                 "Kartendaten © OpenStreetMap-Mitwirkende (ODbL). Kacheln: OpenFreeMap, Schema OpenMapTiles. " +
                     "Darstellung: MapLibre Native. Routing: Valhalla (FOSSGIS-Server). Suche: Photon (komoot). " +
-                    "Satellit: Esri World Imagery bzw. TomTom. Höhendaten: Terrain Tiles (Mapzen/AWS). " +
+                    "Satellit: Esri World Imagery bzw. TomTom; Orthofotos © LGL-BW (dl-de/by-2-0) und © Bayerische Vermessungsverwaltung (CC BY 4.0). " +
+                    "Höhendaten: Terrain Tiles (Mapzen/AWS). " +
                     "Blitzer: Overpass API. Verkehr: © TomTom. Schriften: Doto & Space Mono (SIL Open Font License).",
                 color = c.textMuted, style = MaterialTheme.typography.bodyMedium,
             )

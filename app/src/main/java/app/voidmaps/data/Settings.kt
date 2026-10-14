@@ -58,6 +58,8 @@ data class AppSettings(
     val blitzerDe: Boolean = true,
     val mobileCameras: Boolean = true,
     val satelliteSource: SatelliteSource = SatelliteSource.ESRI,
+    /** Official 20 cm aerial photos of Baden-Württemberg and Bavaria on top (from zoom 12). */
+    val officialImagery: Boolean = true,
     val chargers: Boolean = false,
     val satellite: Boolean = false,
     val buildings3d: Boolean = true,
@@ -101,6 +103,7 @@ class SettingsRepository(private val context: Context) {
         val blitzerDe = booleanPreferencesKey("blitzer_de")
         val mobileCameras = booleanPreferencesKey("mobile_cameras")
         val satelliteSource = stringPreferencesKey("satellite_source")
+        val officialImagery = booleanPreferencesKey("official_imagery")
         val chargers = booleanPreferencesKey("chargers")
         val satellite = booleanPreferencesKey("satellite")
         val buildings3d = booleanPreferencesKey("buildings3d")
@@ -141,6 +144,7 @@ class SettingsRepository(private val context: Context) {
             blitzerDe = p[K.blitzerDe] ?: d.blitzerDe,
             mobileCameras = p[K.mobileCameras] ?: d.mobileCameras,
             satelliteSource = p.enum(K.satelliteSource, d.satelliteSource),
+            officialImagery = p[K.officialImagery] ?: d.officialImagery,
             chargers = p[K.chargers] ?: d.chargers,
             satellite = p[K.satellite] ?: d.satellite,
             buildings3d = p[K.buildings3d] ?: d.buildings3d,
@@ -177,6 +181,7 @@ class SettingsRepository(private val context: Context) {
     suspend fun setBlitzerDe(v: Boolean) = context.dataStore.edit { it[K.blitzerDe] = v }
     suspend fun setMobileCameras(v: Boolean) = context.dataStore.edit { it[K.mobileCameras] = v }
     suspend fun setSatelliteSource(v: SatelliteSource) = context.dataStore.edit { it[K.satelliteSource] = v.name }
+    suspend fun setOfficialImagery(v: Boolean) = context.dataStore.edit { it[K.officialImagery] = v }
     suspend fun setChargers(v: Boolean) = context.dataStore.edit { it[K.chargers] = v }
     suspend fun setSatellite(v: Boolean) = context.dataStore.edit { it[K.satellite] = v }
     suspend fun setBuildings3d(v: Boolean) = context.dataStore.edit { it[K.buildings3d] = v }

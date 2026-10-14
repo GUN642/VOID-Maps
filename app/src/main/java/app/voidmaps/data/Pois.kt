@@ -1,5 +1,6 @@
 package app.voidmaps.data
 
+import org.json.JSONArray
 import org.json.JSONObject
 
 /** Charging networks the user can show on the map. */
@@ -24,22 +25,25 @@ data class Poi(
     fun toPlace() = Place(name, detail, point)
 }
 
-/** Categories for the "Sonderziele" search. */
-enum class PoiCategory(val label: String, val filters: List<String>) {
-    FUEL("Tankstelle", listOf("[\"amenity\"=\"fuel\"]")),
-    CHARGING("Ladestation", listOf("[\"amenity\"=\"charging_station\"]")),
-    PARKING("Parkplatz", listOf("[\"amenity\"=\"parking\"][\"access\"!~\"private|no\"]")),
-    REST("Rastplatz", listOf("[\"highway\"=\"services\"]", "[\"highway\"=\"rest_area\"]")),
+/**
+ * Categories for the "Sonderziele" search: OSM filters for Overpass and the TomTom category
+ * ([tomtom] = categorySet ids, otherwise the label is used as search text).
+ */
+enum class PoiCategory(val label: String, val filters: List<String>, val tomtom: String? = null) {
+    FUEL("Tankstelle", listOf("[\"amenity\"=\"fuel\"]"), "7311"),
+    CHARGING("Ladestation", listOf("[\"amenity\"=\"charging_station\"]"), "7309"),
+    PARKING("Parkplatz", listOf("[\"amenity\"=\"parking\"][\"access\"!~\"private|no\"]"), "7369,7313"),
+    REST("Rastplatz", listOf("[\"highway\"=\"services\"]", "[\"highway\"=\"rest_area\"]"), "7395"),
     SUPERMARKET("Supermarkt", listOf("[\"shop\"=\"supermarket\"]")),
-    RESTAURANT("Restaurant", listOf("[\"amenity\"=\"restaurant\"]")),
+    RESTAURANT("Restaurant", listOf("[\"amenity\"=\"restaurant\"]"), "7315"),
     FASTFOOD("Fast Food", listOf("[\"amenity\"=\"fast_food\"]")),
-    CAFE("Café", listOf("[\"amenity\"=\"cafe\"]")),
-    PHARMACY("Apotheke", listOf("[\"amenity\"=\"pharmacy\"]")),
-    HOSPITAL("Krankenhaus", listOf("[\"amenity\"=\"hospital\"]")),
-    HOTEL("Hotel", listOf("[\"tourism\"~\"hotel|motel\"]")),
-    WORKSHOP("Werkstatt", listOf("[\"shop\"=\"car_repair\"]")),
+    CAFE("Café", listOf("[\"amenity\"=\"cafe\"]"), "9376"),
+    PHARMACY("Apotheke", listOf("[\"amenity\"=\"pharmacy\"]"), "7326"),
+    HOSPITAL("Krankenhaus", listOf("[\"amenity\"=\"hospital\"]"), "7321"),
+    HOTEL("Hotel", listOf("[\"tourism\"~\"hotel|motel\"]"), "7314"),
+    WORKSHOP("Werkstatt", listOf("[\"shop\"=\"car_repair\"]"), "7310"),
     TOILETS("Toiletten", listOf("[\"amenity\"=\"toilets\"]")),
-    ATM("Geldautomat", listOf("[\"amenity\"=\"atm\"]")),
+    ATM("Geldautomat", listOf("[\"amenity\"=\"atm\"]"), "7397"),
 }
 
 object Pois {
@@ -85,18 +89,67 @@ object Pois {
     }
 
     /**
-     * Places of a category around [center] (radius in metres), or along [path] when navigating.
-     * Results are sorted by distance from [center].
+     * Places of a category: with a TomTom key through the fast TomTom search (around [center], or
+     * along [path] when navigating), otherwise – or when TomTom finds nothing – through Overpass.
      */
-    fun category(category: PoiCategory, center: GeoPoint, radius: Int, path: List<GeoPoint>?): List<Poi> {
+    fun category(category: PoiCategory, center: GeoPoint, radius: Int, path: List<GeoPoint>?, tomtomKey: String): List<Poi> {
+        if (tomtomKey.isNotBlank()) {
+            val tt = runCatching {
+                if (path != null && path.size >= 2) tomtomAlongRoute(category, path, tomtomKey) else tomtomNearby(category, center, radius, tomtomKey)
+            }.getOrNull()
+            if (!tt.isNullOrEmpty()) return tt
+        }
+        return overpassCategory(category, center, minOf(radius, 5_000), path)
+    }
+
+    private fun tomtomNearby(category: PoiCategory, center: GeoPoint, radius: Int, key: String): List<Poi> {
+        val common = "key=${Http.enc(key)}&lat=${center.lat}&lon=${center.lon}&radius=$radius&limit=40&language=de-DE"
+        val url = if (category.tomtom != null) {
+            "https://api.tomtom.com/search/2/nearbySearch/.json?$common&categorySet=${category.tomtom}"
+        } else {
+            "https://api.tomtom.com/search/2/categorySearch/${Http.enc(category.label).replace("+", "%20")}.json?$common"
+        }
+        return parseTomTom(Http.get(url, timeoutMs = 6_000), category).sortedBy { Geo.distance(center, it.point) }
+    }
+
+    private fun tomtomAlongRoute(category: PoiCategory, path: List<GeoPoint>, key: String): List<Poi> {
+        var url = "https://api.tomtom.com/search/2/searchAlongRoute/${Http.enc(category.label).replace("+", "%20")}.json" +
+            "?key=${Http.enc(key)}&maxDetourTime=600&limit=20&language=de-DE&sortBy=detourTime"
+        if (category.tomtom != null) url += "&categorySet=${category.tomtom}"
+        val pts = JSONArray()
+        path.take(150).forEach { pts.put(JSONObject().put("lat", it.lat).put("lon", it.lon)) }
+        val body = JSONObject().put("route", JSONObject().put("points", pts)).toString()
+        return parseTomTom(Http.post(url, body, "application/json", 8_000), category)
+    }
+
+    private fun parseTomTom(json: String, category: PoiCategory): List<Poi> {
+        val results = JSONObject(json).optJSONArray("results") ?: return emptyList()
+        val out = ArrayList<Poi>()
+        for (i in 0 until results.length()) {
+            val r = results.getJSONObject(i)
+            val pos = r.optJSONObject("position") ?: continue
+            val poi = r.optJSONObject("poi")
+            val addr = r.optJSONObject("address")
+            val name = poi?.optString("name")?.takeIf { it.isNotBlank() } ?: category.label
+            val detour = r.optInt("detourTime", -1).takeIf { it >= 0 }?.let { "+${(it + 30) / 60} min Umweg" }
+            val detail = listOfNotNull(addr?.optString("freeformAddress")?.takeIf { it.isNotBlank() }, detour).joinToString(" · ")
+            out += Poi("tt:" + r.optString("id", "$i"), name, GeoPoint(pos.getDouble("lat"), pos.getDouble("lon")), detail.ifBlank { category.label })
+        }
+        return out
+    }
+
+    private fun overpassCategory(category: PoiCategory, center: GeoPoint, radius: Int, path: List<GeoPoint>?): List<Poi> {
         val area = if (path != null && path.size >= 2) {
             "(around:800," + path.joinToString(",") { "${"%.5f".format(java.util.Locale.US, it.lat)},${"%.5f".format(java.util.Locale.US, it.lon)}" } + ")"
         } else {
             "(around:$radius,${center.lat},${center.lon})"
         }
-        val q = StringBuilder("[out:json][timeout:25];(")
-        for (f in category.filters) q.append("nwr$f$area;")
-        q.append(");out center tags 80;")
+        val q = StringBuilder("[out:json][timeout:12];(")
+        for (f in category.filters) {
+            q.append("node$f$area;")
+            q.append("way$f$area;")
+        }
+        q.append(");out center tags 60;")
         val arr = query(q.toString()).optJSONArray("elements") ?: return emptyList()
         val out = ArrayList<Poi>()
         for (i in 0 until arr.length()) {

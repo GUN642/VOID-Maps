@@ -9,13 +9,16 @@ plugins {
 // Build number from CI so every GitHub build installs as an update over the previous one.
 val buildNumber = (System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInt()
 
-// Optional TomTom key for local builds. Never committed; CI builds leave it empty
-// because their APKs are published – there the key is entered in the app settings.
+// TomTom key built into the app (requested by the owner, private app). It ends up in the public
+// repository and APK; a key from local.properties or the TOMTOM_API_KEY secret takes precedence,
+// and a key typed into the app settings overrides all of them.
 val localProps = Properties().apply {
     val f = rootProject.file("local.properties")
     if (f.exists()) f.inputStream().use { load(it) }
 }
-val tomtomKey = (localProps.getProperty("tomtom.apiKey") ?: "").trim()
+val tomtomKey = (localProps.getProperty("tomtom.apiKey")
+    ?: System.getenv("TOMTOM_API_KEY")?.takeIf { it.isNotBlank() }
+    ?: "NSgcTWLqpSG7QOeHrrCFDWSpsfwQr84e").trim()
 
 android {
     namespace = "app.voidmaps"

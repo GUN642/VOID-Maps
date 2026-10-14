@@ -269,7 +269,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 out.takeIf { it.size >= 2 }
             }
-            val r = withContext(Dispatchers.IO) { runCatching { Pois.category(c, center, 10_000, path) } }
+            val key = settings.value.tomtomKey
+            val r = withContext(Dispatchers.IO) { runCatching { Pois.category(c, center, 10_000, path, key) } }
             searching = false
             r.onSuccess { list ->
                 results = list.map { it.toPlace() }

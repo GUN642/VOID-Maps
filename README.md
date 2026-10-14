@@ -6,7 +6,7 @@ Konzept und Entscheidungen: [docs/Uebergabe_Navi_App.md](docs/Uebergabe_Navi_App
 ## Funktionen
 - **Karte:** OpenStreetMap-Vektorkacheln (OpenFreeMap, Schema OpenMapTiles), gerendert mit MapLibre Native, eigener Kartenstil
 - **Designs:** *Void* (schwarz, Grautöne, rote Akzente, Dot-Matrix) und *Hell* (Papier-Weiß) – plus *Auto* (folgt dem Dunkelmodus des Systems)
-- **Kartenebenen:** Satellitenbild per Knopf auf der Karte (Esri World Imagery, wahlweise TomTom), 3D-Gebäude, Gelände-Relief aus Höhendaten, Ampeln aus OpenStreetMap
+- **Kartenebenen:** Satellitenbild per Knopf auf der Karte (Esri World Imagery, wahlweise TomTom; in Baden-Württemberg und Bayern ab Straßenzoom die amtlichen 20-cm-Orthofotos der Landesvermessung), 3D-Gebäude, Gelände-Relief aus Höhendaten, Ampeln aus OpenStreetMap
 - **GPS:** Position mit Fahrtrichtung, Karte dreht in Fahrtrichtung (abschaltbar), 3D-Ansicht in der Navigation
 - **Suche:** mit TomTom-Schlüssel schnelle TomTom-Suche, sonst Photon; Treffer aus Favoriten/Verlauf sofort; die 5 zuletzt gesuchten Ziele; Zuhause/Arbeit; langer Druck auf die Karte setzt ein Ziel; `geo:`-Links aus anderen Apps
 - **Sonderziele:** Tankstelle, Ladestation, Parkplatz, Rastplatz, Supermarkt, Restaurant, Café, Apotheke, Krankenhaus, Hotel, Werkstatt u. a. – in der Nähe oder während der Navigation entlang der Route
@@ -25,10 +25,11 @@ Jeder Push auf `main` baut automatisch eine signierte APK – zu finden unter **
 Erstinstallation per Sideload („Unbekannte Apps installieren“ erlauben), danach aktualisiert sich die App selbst.
 
 ## TomTom-Schlüssel
-Kostenlos auf developer.tomtom.com anlegen (Freemium: 50.000 Kachel- und 2.500 sonstige Anfragen pro Tag) und in der App unter
-**Einstellungen → Verkehr · TomTom** eintragen. Der Schlüssel wird nur auf dem Gerät gespeichert.
-Weil die Release-APKs öffentlich sind, wird **kein** Schlüssel in CI-Builds eingebaut. Für eigene lokale Builds kann er optional in
-`local.properties` stehen (wird nie committet):
+Ein Schlüssel ist fest in die App eingebaut (`app/build.gradle.kts`). Achtung: Repository und Release-APKs sind öffentlich,
+der Schlüssel ist damit für jeden lesbar. Im Freemium-Tarif ohne hinterlegte Zahlungsdaten entstehen keine Kosten; wird das
+Kontingent von anderen verbraucht, im TomTom-Dashboard einen neuen Schlüssel erzeugen und hier tauschen.
+Ein in der App unter **Einstellungen → Verkehr · TomTom** eingetragener Schlüssel hat Vorrang. Alternativ kann er als
+Repository-Secret `TOMTOM_API_KEY` oder lokal in `local.properties` stehen:
 
 ```
 tomtom.apiKey=DEIN_SCHLÜSSEL

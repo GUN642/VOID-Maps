@@ -129,12 +129,15 @@ data class StyleConfig(
     val terrain: Boolean = true,
     /** TomTom imagery instead of Esri (TomTom's is older in many places). */
     val tomtomSatellite: Boolean = false,
+    /** Official aerial photos (DOP20) of Baden-Württemberg and Bavaria over the base imagery. */
+    val officialImagery: Boolean = true,
 )
 
 fun styleConfigFor(s: app.voidmaps.data.AppSettings, palette: MapPalette) = StyleConfig(
     palette, s.tomtomKey, s.trafficLayer, s.trafficOriginalColors,
     satellite = s.satellite, buildings3d = s.buildings3d, terrain = s.terrain,
     tomtomSatellite = s.satelliteSource == app.voidmaps.data.SatelliteSource.TOMTOM,
+    officialImagery = s.officialImagery,
 )
 
 /** Builds the MapLibre style JSON for the OpenMapTiles schema (OpenFreeMap tiles, no key needed). */
@@ -190,6 +193,29 @@ object MapStyle {
                 )
             }
         }
+        if (c.satellite && c.officialImagery) {
+            // Digital orthophotos, 20 cm, from the surveying offices (open data, transparent outside the state).
+            sources["dop-bw"] = mapOf(
+                "type" to "raster", "tileSize" to 512, "minzoom" to 12, "maxzoom" to 20,
+                "bounds" to listOf(7.4, 47.5, 10.6, 49.85),
+                "attribution" to "© LGL-BW, dl-de/by-2-0",
+                "tiles" to listOf(
+                    "https://owsproxy.lgl-bw.de/owsproxy/ows/WMS_LGL-BW_ATKIS_DOP_20_C?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap" +
+                        "&LAYERS=IMAGES_DOP_20_RGB&STYLES=&FORMAT=image/png&TRANSPARENT=TRUE&CRS=EPSG:3857" +
+                        "&WIDTH=512&HEIGHT=512&BBOX={bbox-epsg-3857}",
+                ),
+            )
+            sources["dop-by"] = mapOf(
+                "type" to "raster", "tileSize" to 512, "minzoom" to 12, "maxzoom" to 20,
+                "bounds" to listOf(8.95, 47.25, 13.9, 50.6),
+                "attribution" to "© Bayerische Vermessungsverwaltung, CC BY 4.0",
+                "tiles" to listOf(
+                    "https://geoservices.bayern.de/od/wms/dop/v1/dop20?SERVICE=WMS&VERSION=1.1.1&REQUEST=GetMap" +
+                        "&LAYERS=by_dop20c&STYLES=&FORMAT=image/png&TRANSPARENT=TRUE&SRS=EPSG:3857" +
+                        "&WIDTH=512&HEIGHT=512&BBOX={bbox-epsg-3857}",
+                ),
+            )
+        }
         val relief = c.terrain && !c.satellite
         if (relief) {
             // AWS Terrain Tiles (public dataset, Terrarium encoding).
@@ -227,6 +253,10 @@ object MapStyle {
         layers += mapOf("id" to "background", "type" to "background", "paint" to mapOf("background-color" to p.background))
         if (c.satellite) {
             layers += mapOf("id" to "satellite", "type" to "raster", "source" to "satellite", "paint" to mapOf("raster-fade-duration" to 150))
+            if (c.officialImagery) {
+                layers += mapOf("id" to "dop-bw", "type" to "raster", "source" to "dop-bw", "minzoom" to 12, "paint" to mapOf("raster-fade-duration" to 150))
+                layers += mapOf("id" to "dop-by", "type" to "raster", "source" to "dop-by", "minzoom" to 12, "paint" to mapOf("raster-fade-duration" to 150))
+            }
         } else {
             layers += fill("landuse", "landuse", p.landuse, cls("residential", "suburb", "neighbourhood", "commercial", "industrial", "retail"), minzoom = 9)
             layers += fill("landcover-wood", "landcover", p.wood, cls("wood", "forest"))

@@ -33,7 +33,15 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
@@ -71,6 +79,10 @@ import app.voidmaps.ui.theme.headingStyle
 
 @Composable
 fun NavigationOverlay(vm: MainViewModel, settings: AppSettings, s: NavState, onTopMeasured: (Int) -> Unit = {}) {
+    if (isLandscape()) {
+        NavigationOverlayLandscape(vm, settings, s, onTopMeasured)
+        return
+    }
     val c = VoidTheme.colors
     val density = LocalDensity.current
     var topBottom by remember { mutableFloatStateOf(0f) }
@@ -149,6 +161,88 @@ fun NavigationOverlay(vm: MainViewModel, settings: AppSettings, s: NavState, onT
     }
 }
 
+/** Width of the side panel in landscape; the map uses the rest. */
+val LANDSCAPE_PANEL = 340.dp
+
+@Composable
+fun isLandscape(): Boolean {
+    val cfg = LocalConfiguration.current
+    return cfg.screenWidthDp > cfg.screenHeightDp
+}
+
+/**
+ * Landscape: everything in a slim panel on the left (turn, lanes, warnings, stop, arrival), the map
+ * keeps the whole rest of the screen. Buttons sit in a column on the right edge.
+ */
+@Composable
+private fun NavigationOverlayLandscape(vm: MainViewModel, settings: AppSettings, s: NavState, onTopMeasured: (Int) -> Unit) {
+    val density = LocalDensity.current
+    // North arrow simply at the top right of the map.
+    LaunchedEffect(Unit) { onTopMeasured(with(density) { 24.dp.roundToPx() }) }
+    Box(Modifier.fillMaxSize()) {
+        Column(
+            Modifier.fillMaxHeight().width(LANDSCAPE_PANEL)
+                .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Vertical + WindowInsetsSides.Start))
+                .padding(8.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            ManeuverCard(s, compact = true)
+            s.lanes?.let { LaneStrip(it) }
+            s.faster?.let { f ->
+                FasterRouteCard(f.savedSeconds, onAccept = { Navigator.acceptFaster() }, onDecline = { Navigator.declineFaster() })
+            }
+            s.warning?.let { w -> WarningBanner(w.hazard.type, w.hazard.description, w.distance) }
+            Spacer(Modifier.weight(1f))
+            val nextStop = s.stops.firstOrNull()
+            if (nextStop != null && s.nextStopDistance != null && !s.arrived) {
+                StopBar(nextStop.name, s.nextStopDistance, s.nextStopTime ?: 0.0, s.stops.size) { Navigator.removeStop(nextStop) }
+            }
+            if (s.arrived) ArrivedBar(s) { vm.stopNavigation() } else BottomBar(s) { vm.stopNavigation() }
+        }
+
+        // Progress bar along the left edge of the map, right next to the panel.
+        RouteProgressBar(
+            s, settings,
+            Modifier.padding(start = LANDSCAPE_PANEL + 4.dp)
+                .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Vertical))
+                .padding(vertical = 70.dp).width(52.dp).fillMaxHeight(),
+        )
+
+        Column(
+            Modifier.align(Alignment.CenterEnd)
+                .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.End))
+                .padding(end = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            VoiceButton(vm, settings.voiceMode)
+            SatelliteButton(vm, settings.satellite)
+            val icon = when (settings.navView) {
+                NavView.HEADING -> Icons.Outlined.Navigation
+                NavView.NORTH -> Icons.Outlined.Explore
+                NavView.OVERVIEW -> Icons.Outlined.Map
+            }
+            MapButton(icon, "Ausrichtung", onClick = { vm.cycleNavView() }, active = settings.navView != NavView.HEADING)
+            MapButton(Icons.Outlined.Search, "Zwischenziel oder Sonderziel suchen", onClick = { vm.openSearch(Pick.STOP) })
+        }
+
+        Row(
+            Modifier.align(Alignment.BottomEnd)
+                .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom + WindowInsetsSides.End))
+                .padding(10.dp),
+            verticalAlignment = Alignment.Bottom,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            if (!vm.following || settings.navView == NavView.OVERVIEW) {
+                MapButton(Icons.Outlined.MyLocation, "Zentrieren", onClick = {
+                    if (settings.navView == NavView.OVERVIEW) vm.cycleNavView()
+                    vm.following = true
+                })
+            }
+            SpeedBubble(s.speedKmh)
+        }
+    }
+}
+
 @Composable
 private fun FasterRouteCard(saved: Double, onAccept: () -> Unit, onDecline: () -> Unit) {
     val c = VoidTheme.colors
@@ -186,7 +280,7 @@ private fun StopBar(name: String, distance: Double, seconds: Double, count: Int,
 }
 
 @Composable
-private fun ManeuverCard(s: NavState) {
+private fun ManeuverCard(s: NavState, compact: Boolean = false) {
     val c = VoidTheme.colors
     val m = s.route.maneuvers.getOrNull(s.next)
     val dark = c.isDark
@@ -205,14 +299,15 @@ private fun ManeuverCard(s: NavState) {
             return@Column
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
-            if (m != null) ManeuverIcon(m.kind, arrow, Modifier.size(72.dp), exit = m.exit)
-            Spacer(Modifier.width(16.dp))
+            if (m != null) ManeuverIcon(m.kind, arrow, Modifier.size(if (compact) 54.dp else 72.dp), exit = m.exit)
+            Spacer(Modifier.width(if (compact) 12.dp else 16.dp))
             Column(Modifier.weight(1f)) {
-                Text(Format.distance(s.distanceToNext).uppercase(), style = dotNumber(44), color = fg)
+                Text(Format.distance(s.distanceToNext).uppercase(), style = dotNumber(if (compact) 32 else 44), color = fg)
                 val street = m?.street
                 Text(
                     street ?: m?.text?.trimEnd('.') ?: s.destination.name,
-                    style = MaterialTheme.typography.titleLarge, color = fg, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                    style = if (compact) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge,
+                    color = fg, maxLines = 2, overflow = TextOverflow.Ellipsis,
                 )
                 if (street != null && m != null && m.text.isNotBlank()) {
                     Text(m.text.trimEnd('.'), style = MaterialTheme.typography.bodyMedium, color = fg.copy(alpha = 0.7f), maxLines = 1, overflow = TextOverflow.Ellipsis)

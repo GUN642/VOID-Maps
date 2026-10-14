@@ -61,6 +61,7 @@ class MapController(private val context: Context) {
     private var headingUp = true
     private var tilt = true
     private var topPadding = 0.0
+    private var leftPadding = 0.0
     private var lastLocation: Location? = null
 
     val isReady: Boolean get() = style != null
@@ -195,8 +196,10 @@ class MapController(private val context: Context) {
 
     // ------------------------------------------------------------------ camera
 
-    fun setFollow(mode: Follow, headingUp: Boolean, tilt: Boolean, topPadding: Double) {
-        val changed = mode != follow || headingUp != this.headingUp || tilt != this.tilt || topPadding != this.topPadding
+    fun setFollow(mode: Follow, headingUp: Boolean, tilt: Boolean, topPadding: Double, leftPadding: Double = 0.0) {
+        val changed = mode != follow || headingUp != this.headingUp || tilt != this.tilt || topPadding != this.topPadding ||
+            leftPadding != this.leftPadding
+        this.leftPadding = leftPadding
         follow = mode
         this.headingUp = headingUp
         this.tilt = tilt
@@ -214,13 +217,13 @@ class MapController(private val context: Context) {
                 Follow.NONE -> lc.cameraMode = CameraMode.NONE
                 Follow.BROWSE -> {
                     lc.cameraMode = if (headingUp) CameraMode.TRACKING_GPS else CameraMode.TRACKING_GPS_NORTH
-                    lc.paddingWhileTracking(doubleArrayOf(0.0, 0.0, 0.0, 0.0), 600)
+                    lc.paddingWhileTracking(doubleArrayOf(leftPadding, 0.0, 0.0, 0.0), 600)
                     lc.tiltWhileTracking(0.0, 600)
                     if (m.cameraPosition.zoom < 13) lc.zoomWhileTracking(15.5, 800)
                 }
                 Follow.NAVIGATE -> {
                     lc.cameraMode = if (headingUp) CameraMode.TRACKING_GPS else CameraMode.TRACKING_GPS_NORTH
-                    lc.paddingWhileTracking(doubleArrayOf(0.0, topPadding, 0.0, 0.0), 600)
+                    lc.paddingWhileTracking(doubleArrayOf(leftPadding, topPadding, 0.0, 0.0), 600)
                     lc.zoomWhileTracking(16.5, 800)
                     lc.tiltWhileTracking(if (tilt && headingUp) 55.0 else 0.0, 800)
                 }

@@ -23,6 +23,9 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -246,8 +249,14 @@ fun MapScreen(vm: MainViewModel, settings: AppSettings, design: Design, hasPermi
             else -> Follow.NONE
         }
         val headingUp = if (vm.mode == Mode.NAVIGATE) settings.navView == NavView.HEADING else settings.headingUp
-        LaunchedEffect(mapReady, follow, headingUp, settings.tilt3d, heightPx) {
-            if (mapReady) controller.setFollow(follow, headingUp, settings.tilt3d, heightPx * 0.42)
+        val landscape = isLandscape()
+        val panelPx = with(density) { (LANDSCAPE_PANEL + 40.dp).toPx() }.toDouble()
+        LaunchedEffect(mapReady, follow, headingUp, settings.tilt3d, heightPx, landscape, vm.mode) {
+            if (mapReady) {
+                // Landscape: the side panel covers the left part, so the position moves into the free map area.
+                if (landscape && vm.mode == Mode.NAVIGATE) controller.setFollow(follow, headingUp, settings.tilt3d, heightPx * 0.30, panelPx)
+                else controller.setFollow(follow, headingUp, settings.tilt3d, heightPx * 0.42)
+            }
         }
         // Route overview while navigating: refit now and then as the route shrinks.
         LaunchedEffect(mapReady, overview, nav?.routeVersion) {
@@ -256,7 +265,8 @@ fun MapScreen(vm: MainViewModel, settings: AppSettings, design: Design, hasPermi
                 val snap = n.snap
                 val pts = if (snap != null) n.route.line.remainder(snap.segment, snap.point) else n.route.points
                 with(density) {
-                    controller.showOverview(pts, 60.dp.roundToPx(), 260.dp.roundToPx(), 60.dp.roundToPx(), 200.dp.roundToPx())
+                    if (landscape) controller.showOverview(pts, (LANDSCAPE_PANEL + 40.dp).roundToPx(), 40.dp.roundToPx(), 90.dp.roundToPx(), 40.dp.roundToPx())
+                    else controller.showOverview(pts, 60.dp.roundToPx(), 260.dp.roundToPx(), 60.dp.roundToPx(), 200.dp.roundToPx())
                 }
                 delay(30_000)
             }
@@ -266,7 +276,8 @@ fun MapScreen(vm: MainViewModel, settings: AppSettings, design: Design, hasPermi
             if (mapReady && preview != null && vm.mode == Mode.PREVIEW) {
                 val all = routes.flatMap { it.points }
                 with(density) {
-                    controller.showOverview(all, 40.dp.roundToPx(), 170.dp.roundToPx(), 40.dp.roundToPx(), 380.dp.roundToPx())
+                    if (landscape) controller.showOverview(all, 400.dp.roundToPx(), 40.dp.roundToPx(), 420.dp.roundToPx(), 30.dp.roundToPx())
+                    else controller.showOverview(all, 40.dp.roundToPx(), 170.dp.roundToPx(), 40.dp.roundToPx(), 380.dp.roundToPx())
                 }
             }
         }
@@ -348,7 +359,7 @@ private fun BrowseOverlay(vm: MainViewModel, settings: AppSettings, hasPermissio
     val c = VoidTheme.colors
     Box(Modifier.fillMaxSize()) {
         Column(
-            Modifier.statusBarsPadding().padding(horizontal = 16.dp, vertical = 10.dp)
+            Modifier.statusBarsPadding().padding(horizontal = 16.dp, vertical = 10.dp).widthIn(max = 480.dp)
                 .onGloballyPositioned { onTop(it.boundsInRoot().bottom.toInt()) },
         ) {
             Row(
@@ -426,8 +437,10 @@ private fun PreviewOverlay(vm: MainViewModel, settings: AppSettings, onTop: (Int
     val incidents by HazardRepo.incidents.collectAsState()
     val cameras by HazardRepo.cameras.collectAsState()
     Box(Modifier.fillMaxSize()) {
+        val landscape = isLandscape()
         MapCard(
-            Modifier.statusBarsPadding().padding(horizontal = 16.dp, vertical = 10.dp).fillMaxWidth()
+            Modifier.statusBarsPadding().padding(horizontal = 16.dp, vertical = 10.dp)
+                .then(if (landscape) Modifier.width(360.dp) else Modifier.fillMaxWidth())
                 .onGloballyPositioned { onTop(it.boundsInRoot().bottom.toInt()) },
         ) {
             Column(Modifier.padding(start = 20.dp, end = 6.dp, top = 12.dp, bottom = 10.dp)) {
@@ -463,8 +476,14 @@ private fun PreviewOverlay(vm: MainViewModel, settings: AppSettings, onTop: (Int
             }
         }
 
-        MapCard(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(16.dp).fillMaxWidth()) {
-            Column(Modifier.padding(18.dp)) {
+        MapCard(
+            if (landscape) {
+                Modifier.align(Alignment.TopEnd).systemBarsPadding().padding(10.dp).width(380.dp)
+            } else {
+                Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(16.dp).fillMaxWidth()
+            },
+        ) {
+            Column(Modifier.verticalScroll(rememberScrollState()).padding(if (landscape) 14.dp else 18.dp)) {
                 when {
                     vm.routing -> {
                         Label("Routen werden berechnet")

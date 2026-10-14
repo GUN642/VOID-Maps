@@ -248,10 +248,10 @@ private fun BrowseOverlay(vm: MainViewModel, settings: AppSettings, hasPermissio
                 Spacer(Modifier.height(10.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     settings.home?.let { home ->
-                        QuickChip("Zuhause", Icons.Outlined.Home) { vm.setDestination(home) }
+                        QuickChip("Zuhause", Icons.Outlined.Home) { vm.goTo(home) }
                     }
                     settings.work?.let { work ->
-                        QuickChip("Arbeit", Icons.Outlined.Work) { vm.setDestination(work) }
+                        QuickChip("Arbeit", Icons.Outlined.Work) { vm.goTo(work) }
                     }
                 }
             }

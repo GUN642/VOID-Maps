@@ -193,10 +193,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         query = ""
         results = emptyList()
         update { addRecent(place) }
-        setDestination(place)
+        goTo(place)
     }
 
-    fun setDestination(place: Place) {
+    fun goTo(place: Place) {
         destination = place
         preview = null
         routeError = null
@@ -210,7 +210,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             val place = withContext(Dispatchers.IO) { Search.reverse(p) }
                 ?: Place("Markierter Ort", "%.5f, %.5f".format(java.util.Locale.US, p.lat, p.lon), p)
-            setDestination(place.copy(point = p))
+            goTo(place.copy(point = p))
         }
     }
 
@@ -317,7 +317,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (coords != null) {
             val p = GeoPoint(coords.groupValues[1].toDouble(), coords.groupValues[2].toDouble())
             if (p.lat != 0.0 || p.lon != 0.0) {
-                setDestination(Place(label ?: "Ziel", "%.5f, %.5f".format(java.util.Locale.US, p.lat, p.lon), p))
+                goTo(Place(label ?: "Ziel", "%.5f, %.5f".format(java.util.Locale.US, p.lat, p.lon), p))
                 return
             }
         }
@@ -325,7 +325,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             val r = withContext(Dispatchers.IO) { runCatching { Search.search(q, myPosition()) }.getOrNull() }
             val first = r?.firstOrNull()
-            if (first != null) setDestination(first) else {
+            if (first != null) goTo(first) else {
                 mode = Mode.SEARCH
                 onQuery(q)
             }

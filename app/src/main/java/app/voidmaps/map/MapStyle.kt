@@ -127,11 +127,14 @@ data class StyleConfig(
     val satellite: Boolean = false,
     val buildings3d: Boolean = true,
     val terrain: Boolean = true,
+    /** TomTom imagery instead of Esri (TomTom's is older in many places). */
+    val tomtomSatellite: Boolean = false,
 )
 
 fun styleConfigFor(s: app.voidmaps.data.AppSettings, palette: MapPalette) = StyleConfig(
     palette, s.tomtomKey, s.trafficLayer, s.trafficOriginalColors,
     satellite = s.satellite, buildings3d = s.buildings3d, terrain = s.terrain,
+    tomtomSatellite = s.satelliteSource == app.voidmaps.data.SatelliteSource.TOMTOM,
 )
 
 /** Builds the MapLibre style JSON for the OpenMapTiles schema (OpenFreeMap tiles, no key needed). */
@@ -174,8 +177,8 @@ object MapStyle {
             SIGNALS to mapOf("type" to "geojson", "data" to EMPTY),
         )
         if (c.satellite) {
-            // TomTom imagery with a key, Esri World Imagery otherwise.
-            sources["satellite"] = if (c.tomtomKey.isNotBlank()) {
+            // Esri World Imagery by default (in Germany largely recent official aerial photos), TomTom on request.
+            sources["satellite"] = if (c.tomtomSatellite && c.tomtomKey.isNotBlank()) {
                 mapOf(
                     "type" to "raster", "tileSize" to 256, "maxzoom" to 19, "attribution" to "© TomTom",
                     "tiles" to listOf("https://api.tomtom.com/map/1/tile/sat/main/{z}/{x}/{y}.jpg?key=${Http.enc(c.tomtomKey)}"),

@@ -381,7 +381,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             // Warnings along the route are shown already in the preview.
             preview?.let { route ->
                 if (s.tomtomKey.isNotBlank()) HazardRepo.loadIncidents(s.tomtomKey, BBox.chunks(route.points, 9_000.0, 500.0, 20), replace = false)
-                if (s.speedCameras) HazardRepo.loadCameras(BBox.chunks(route.points, 2_500.0, 300.0, 40), replace = false)
+                if (s.speedCameras) HazardRepo.ensureCameras(HazardRepo.cellsFor(route.points), s.blitzerDe, s.mobileCameras)
             }
         }
     }
@@ -450,15 +450,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         lastView = Triple(box, center, zoom)
         if (mode == Mode.OFFLINE_SELECT) offlineBounds = box
         val s = settings.value
-        if (zoom < 9.5) return
-        if (s.hasTraffic || s.speedCameras) {
-            viewModelScope.launch { HazardRepo.loadForView(box, center, s.tomtomKey, s.speedCameras) }
+        if (zoom < 8.5) return
+        if (s.hasTraffic && zoom >= 9.5) {
+            viewModelScope.launch { HazardRepo.loadIncidentsForView(box, center, s.tomtomKey) }
+        }
+        if (s.speedCameras) {
+            viewModelScope.launch { HazardRepo.ensureCameras(HazardRepo.cellsFor(box), s.blitzerDe, s.mobileCameras) }
         }
         if (s.trafficSignals && zoom >= 14) {
             viewModelScope.launch { HazardRepo.loadSignals(center) }
         }
-        if (s.chargers && zoom >= 9) {
-            viewModelScope.launch { HazardRepo.loadChargersForView(box, center, s.chargerOperators) }
+        if (s.chargers) {
+            viewModelScope.launch { HazardRepo.ensureChargers(HazardRepo.cellsFor(box), s.chargerOperators) }
         }
     }
 
@@ -469,14 +472,33 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (!on) {
             HazardRepo.clearCameras()
         } else {
-            val v = lastView
-            viewModelScope.launch {
-                delay(100)
-                val route = Navigator.state.value?.route ?: preview
-                if (route != null) HazardRepo.loadCameras(BBox.chunks(route.points, 2_500.0, 300.0, 40), replace = false)
-                if (v != null && v.third >= 9.5) HazardRepo.loadForView(v.first, v.second, "", cameras = true)
-            }
+            reloadCameras()
         }
+    }
+
+    /** Loads the cameras for the current view and route again (after a source was switched). */
+    fun reloadCameras() {
+        val v = lastView
+        viewModelScope.launch {
+            delay(150)
+            val s = settings.value
+            if (!s.speedCameras) return@launch
+            val route = Navigator.state.value?.route ?: preview
+            if (route != null) HazardRepo.ensureCameras(HazardRepo.cellsFor(route.points), s.blitzerDe, s.mobileCameras)
+            if (v != null && v.third >= 8.5) HazardRepo.ensureCameras(HazardRepo.cellsFor(v.first), s.blitzerDe, s.mobileCameras)
+        }
+    }
+
+    fun setBlitzerDe(on: Boolean) {
+        update { this.setBlitzerDe(on) }
+        HazardRepo.clearCameras()
+        reloadCameras()
+    }
+
+    fun setMobileCameras(on: Boolean) {
+        update { this.setMobileCameras(on) }
+        HazardRepo.clearCameras()
+        reloadCameras()
     }
 
     fun setChargers(on: Boolean) {
@@ -488,15 +510,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val cur = settings.value.chargerOperators
         val next = if (op in cur) cur - op else cur + op
         update { setChargerOperators(next) }
-        HazardRepo.clearChargers()
-        reloadChargers(next)
+        // All networks are loaded anyway; the map only filters.
     }
 
-    private fun reloadChargers(ops: Set<app.voidmaps.data.ChargeOperator> = settings.value.chargerOperators) {
+    private fun reloadChargers() {
         val v = lastView ?: return
         viewModelScope.launch {
             delay(100)
-            if (v.third >= 9) HazardRepo.loadChargersForView(v.first, v.second, ops, force = true)
+            val route = Navigator.state.value?.route ?: preview
+            if (route != null) HazardRepo.ensureChargers(HazardRepo.cellsFor(route.points), settings.value.chargerOperators)
+            if (v.third >= 8.5) HazardRepo.ensureChargers(HazardRepo.cellsFor(v.first), settings.value.chargerOperators)
         }
     }
 

@@ -25,6 +25,12 @@ enum class VoiceMode(val label: String) {
     ALL("Laut"),
 }
 
+/** Where satellite imagery comes from. */
+enum class SatelliteSource(val label: String) {
+    ESRI("Esri (aktueller)"),
+    TOMTOM("TomTom"),
+}
+
 /** Map orientation during navigation. */
 enum class NavView(val label: String) {
     HEADING("Route oben"),
@@ -48,6 +54,10 @@ data class AppSettings(
     val trafficOriginalColors: Boolean = false,
     /** Speed camera layer. Off by default – see § 23 Abs. 1c StVO. */
     val speedCameras: Boolean = false,
+    /** Cameras from Blitzer.de in addition to OpenStreetMap (unofficial interface). */
+    val blitzerDe: Boolean = true,
+    val mobileCameras: Boolean = true,
+    val satelliteSource: SatelliteSource = SatelliteSource.ESRI,
     val chargers: Boolean = false,
     val satellite: Boolean = false,
     val buildings3d: Boolean = true,
@@ -88,6 +98,9 @@ class SettingsRepository(private val context: Context) {
         val traffic = booleanPreferencesKey("traffic")
         val trafficOriginal = booleanPreferencesKey("traffic_original")
         val cameras = booleanPreferencesKey("speed_cameras")
+        val blitzerDe = booleanPreferencesKey("blitzer_de")
+        val mobileCameras = booleanPreferencesKey("mobile_cameras")
+        val satelliteSource = stringPreferencesKey("satellite_source")
         val chargers = booleanPreferencesKey("chargers")
         val satellite = booleanPreferencesKey("satellite")
         val buildings3d = booleanPreferencesKey("buildings3d")
@@ -125,6 +138,9 @@ class SettingsRepository(private val context: Context) {
             trafficLayer = p[K.traffic] ?: d.trafficLayer,
             trafficOriginalColors = p[K.trafficOriginal] ?: d.trafficOriginalColors,
             speedCameras = p[K.cameras] ?: d.speedCameras,
+            blitzerDe = p[K.blitzerDe] ?: d.blitzerDe,
+            mobileCameras = p[K.mobileCameras] ?: d.mobileCameras,
+            satelliteSource = p.enum(K.satelliteSource, d.satelliteSource),
             chargers = p[K.chargers] ?: d.chargers,
             satellite = p[K.satellite] ?: d.satellite,
             buildings3d = p[K.buildings3d] ?: d.buildings3d,
@@ -158,6 +174,9 @@ class SettingsRepository(private val context: Context) {
     suspend fun setTraffic(v: Boolean) = context.dataStore.edit { it[K.traffic] = v }
     suspend fun setTrafficOriginal(v: Boolean) = context.dataStore.edit { it[K.trafficOriginal] = v }
     suspend fun setSpeedCameras(v: Boolean) = context.dataStore.edit { it[K.cameras] = v }
+    suspend fun setBlitzerDe(v: Boolean) = context.dataStore.edit { it[K.blitzerDe] = v }
+    suspend fun setMobileCameras(v: Boolean) = context.dataStore.edit { it[K.mobileCameras] = v }
+    suspend fun setSatelliteSource(v: SatelliteSource) = context.dataStore.edit { it[K.satelliteSource] = v.name }
     suspend fun setChargers(v: Boolean) = context.dataStore.edit { it[K.chargers] = v }
     suspend fun setSatellite(v: Boolean) = context.dataStore.edit { it[K.satellite] = v }
     suspend fun setBuildings3d(v: Boolean) = context.dataStore.edit { it[K.buildings3d] = v }

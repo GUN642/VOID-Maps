@@ -33,8 +33,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 
-/** A hazard that lies on the current route. */
-data class RouteHazard(val hazard: Hazard, val along: Double)
+/** A hazard that lies on the current route; [endAlong] is where a jam or roadworks end. */
+data class RouteHazard(val hazard: Hazard, val along: Double, val endAlong: Double? = null)
 
 data class Warning(val hazard: Hazard, val distance: Double)
 
@@ -390,16 +390,16 @@ object Navigator {
     private fun currentWarning(hazards: List<RouteHazard>, along: Double): Warning? {
         val cams = settings.speedCameras
         return hazards.asSequence()
-            .filter { cams || it.hazard.type != HazardType.SPEED_CAMERA }
+            .filter { cams || !it.hazard.type.isCamera }
             .map { it to it.along - along }
-            .filter { (h, d) -> d > -15 && d < if (h.hazard.type == HazardType.SPEED_CAMERA) 1500.0 else 3000.0 }
+            .filter { (h, d) -> d > -15 && d < if (h.hazard.type.isCamera) 1500.0 else 3000.0 }
             .minByOrNull { it.second }
             ?.let { (h, d) -> Warning(h.hazard, d.coerceAtLeast(0.0)) }
     }
 
     private fun announceWarning(w: Warning?, speed: Double) {
         if (w == null || w.hazard.id in spokenHazards) return
-        val camera = w.hazard.type == HazardType.SPEED_CAMERA
+        val camera = w.hazard.type.isCamera
         if (camera && !settings.speedCameras) return
         val limit = when {
             camera -> if (speed > 22) 1000.0 else 500.0
@@ -498,13 +498,10 @@ object Navigator {
             val boxes = withContext(Dispatchers.Default) { BBox.chunks(rest, 9_000.0, 500.0, limit = 20) }
             HazardRepo.loadIncidents(st.tomtomKey, boxes, replace = false)
         }
-        if (st.speedCameras) {
-            val boxes = withContext(Dispatchers.Default) { BBox.chunks(rest, 2_500.0, 300.0, limit = 40) }
-            HazardRepo.loadCameras(boxes, replace = false)
-        }
-        if (st.chargers) {
-            val boxes = withContext(Dispatchers.Default) { BBox.chunks(rest, 2_500.0, 2_000.0, limit = 40) }
-            HazardRepo.loadChargers(boxes, st.chargerOperators, replace = false)
+        if (st.speedCameras || st.chargers) {
+            val cells = withContext(Dispatchers.Default) { HazardRepo.cellsFor(rest) }
+            if (st.speedCameras) HazardRepo.ensureCameras(cells, st.blitzerDe, st.mobileCameras)
+            if (st.chargers) HazardRepo.ensureChargers(cells, st.chargerOperators)
         }
     }
 
@@ -512,15 +509,21 @@ object Navigator {
         val out = ArrayList<RouteHazard>()
         for (h in hazards) {
             val snap = route.line.snap(h.point) ?: continue
-            val max = if (h.type == HazardType.SPEED_CAMERA) 35.0 else 60.0
+            val max = if (h.type.isCamera) 35.0 else 60.0
             if (snap.offset > max) continue
             // Incidents on the opposite carriageway share the road but not the direction.
-            if (h.bearing != null && h.type != HazardType.SPEED_CAMERA &&
+            if (h.bearing != null && !h.type.isCamera &&
                 Geo.angleDiff(h.bearing, route.line.segmentBearing(snap.segment)) > 70
             ) {
                 continue
             }
-            out += RouteHazard(h, snap.along)
+            val end = if (h.line.size >= 2) {
+                route.line.snap(h.line.last(), snap.segment, window = 4000)
+                    ?.takeIf { it.offset < 80 && it.along > snap.along }?.along
+            } else {
+                null
+            }
+            out += RouteHazard(h, snap.along, end)
         }
         return out.sortedBy { it.along }
     }

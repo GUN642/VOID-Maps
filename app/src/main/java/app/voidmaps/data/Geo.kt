@@ -210,6 +210,12 @@ object Format {
         return if (total < 60) "$total min" else "${total / 60} h %02d min".format(total % 60)
     }
 
+    /** Remaining time as hh:mm, e.g. "01:05". */
+    fun hhmm(seconds: Double): String {
+        val total = (seconds / 60).roundToInt().coerceAtLeast(0)
+        return "%02d:%02d".format(total / 60, total % 60)
+    }
+
     fun clock(epochMs: Long): String =
         java.text.SimpleDateFormat("HH:mm", java.util.Locale.GERMANY).format(java.util.Date(epochMs))
 

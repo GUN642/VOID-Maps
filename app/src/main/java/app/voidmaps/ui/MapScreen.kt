@@ -49,6 +49,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -63,6 +64,8 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
@@ -244,10 +247,18 @@ fun MapScreen(vm: MainViewModel, settings: AppSettings, design: Design, hasPermi
 
         AndroidView(factory = { mapView }, modifier = Modifier.fillMaxSize())
 
+        // North arrow right below whatever sits at the top (search bar, destination card, turn card).
+        var topInset by remember { mutableIntStateOf(0) }
+        LaunchedEffect(mapReady, topInset) {
+            if (mapReady && topInset > 0) {
+                with(density) { controller.setCompassTop(topInset + 10.dp.roundToPx(), 18.dp.roundToPx()) }
+            }
+        }
+        val onTop: (Int) -> Unit = { if (it != topInset) topInset = it }
         when (vm.mode) {
-            Mode.BROWSE -> BrowseOverlay(vm, settings, hasPermission, onRequestPermission)
-            Mode.PREVIEW -> PreviewOverlay(vm, settings)
-            Mode.NAVIGATE -> nav?.let { NavigationOverlay(vm, settings, it) }
+            Mode.BROWSE -> BrowseOverlay(vm, settings, hasPermission, onRequestPermission, onTop)
+            Mode.PREVIEW -> PreviewOverlay(vm, settings, onTop)
+            Mode.NAVIGATE -> nav?.let { NavigationOverlay(vm, settings, it, onTop) }
             Mode.OFFLINE_SELECT -> OfflineSelectOverlay(vm)
             Mode.SEARCH -> {}
         }
@@ -307,10 +318,13 @@ fun VoiceButton(vm: MainViewModel, mode: VoiceMode) {
 }
 
 @Composable
-private fun BrowseOverlay(vm: MainViewModel, settings: AppSettings, hasPermission: Boolean, onRequestPermission: () -> Unit) {
+private fun BrowseOverlay(vm: MainViewModel, settings: AppSettings, hasPermission: Boolean, onRequestPermission: () -> Unit, onTop: (Int) -> Unit) {
     val c = VoidTheme.colors
     Box(Modifier.fillMaxSize()) {
-        Column(Modifier.statusBarsPadding().padding(horizontal = 16.dp, vertical = 10.dp)) {
+        Column(
+            Modifier.statusBarsPadding().padding(horizontal = 16.dp, vertical = 10.dp)
+                .onGloballyPositioned { onTop(it.boundsInRoot().bottom.toInt()) },
+        ) {
             Row(
                 Modifier.fillMaxWidth().height(56.dp).shadow(8.dp, RoundedCornerShape(28.dp)).clip(RoundedCornerShape(28.dp))
                     .background(c.surface).clickable { vm.openSearch() }.padding(start = 20.dp, end = 6.dp),
@@ -380,13 +394,16 @@ private fun QuickChip(text: String, icon: ImageVector, onClick: () -> Unit) {
 }
 
 @Composable
-private fun PreviewOverlay(vm: MainViewModel, settings: AppSettings) {
+private fun PreviewOverlay(vm: MainViewModel, settings: AppSettings, onTop: (Int) -> Unit) {
     val c = VoidTheme.colors
     val dest = vm.destination ?: return
     val incidents by HazardRepo.incidents.collectAsState()
     val cameras by HazardRepo.cameras.collectAsState()
     Box(Modifier.fillMaxSize()) {
-        MapCard(Modifier.statusBarsPadding().padding(horizontal = 16.dp, vertical = 10.dp).fillMaxWidth()) {
+        MapCard(
+            Modifier.statusBarsPadding().padding(horizontal = 16.dp, vertical = 10.dp).fillMaxWidth()
+                .onGloballyPositioned { onTop(it.boundsInRoot().bottom.toInt()) },
+        ) {
             Column(Modifier.padding(start = 20.dp, end = 6.dp, top = 12.dp, bottom = 10.dp)) {
                 vm.stops.forEachIndexed { i, s ->
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -434,7 +451,7 @@ private fun PreviewOverlay(vm: MainViewModel, settings: AppSettings) {
                                 val list = incidents + if (settings.speedCameras) cameras else emptyList()
                                 list.count { h ->
                                     val s = r.line.snap(h.point)
-                                    s != null && s.offset < if (h.type == HazardType.SPEED_CAMERA) 35 else 60
+                                    s != null && s.offset < if (h.type.isCamera) 35 else 60
                                 }
                             }
                             RouteOption(r, selected = i == vm.selectedRoute, fastest = fastest, hazards = hazards) { vm.selectRoute(i) }

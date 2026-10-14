@@ -57,6 +57,7 @@ import app.voidmaps.data.VoiceMode
 import app.voidmaps.map.OfflineMaps
 import app.voidmaps.nav.Navigator
 import app.voidmaps.data.RoutingEngine
+import app.voidmaps.data.SatelliteSource
 import app.voidmaps.data.ThemeChoice
 import app.voidmaps.data.Updater
 import app.voidmaps.ui.theme.Design
@@ -93,6 +94,16 @@ fun SettingsScreen(vm: MainViewModel, s: AppSettings, onBack: () -> Unit) {
             Toggle("Fahrtrichtung oben", "Karte dreht sich mit, sonst Norden oben", s.headingUp) { v -> vm.update { setHeadingUp(v) } }
             Toggle("3D-Ansicht bei Navigation", "Geneigte Karte während der Zielführung", s.tilt3d) { v -> vm.update { setTilt(v) } }
             Toggle("Satellitenbild", "Luftbild statt gezeichneter Karte (auch per Knopf auf der Karte)", s.satellite) { v -> vm.update { setSatellite(v) } }
+            run {
+                Label("Luftbild-Quelle")
+                Spacer(Modifier.height(8.dp))
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SatelliteSource.entries.forEach { src ->
+                        Pill(src.label, selected = src == s.satelliteSource, onClick = { vm.update { setSatelliteSource(src) } })
+                    }
+                }
+                Spacer(Modifier.height(6.dp))
+            }
             Toggle("3D-Gebäude", "Gebäude mit Höhe, sichtbar beim Neigen der Karte", s.buildings3d) { v -> vm.update { setBuildings3d(v) } }
             Toggle("Gelände-Relief", "Berge und Täler plastisch schattiert", s.terrain) { v -> vm.update { setTerrain(v) } }
             Toggle("Ampeln", "Ampeln aus OpenStreetMap ab Straßenzoom", s.trafficSignals) { v -> vm.setTrafficSignals(v) }
@@ -159,6 +170,12 @@ fun SettingsScreen(vm: MainViewModel, s: AppSettings, onBack: () -> Unit) {
 
             Group("Blitzer")
             Toggle("Blitzer anzeigen", "Feste Anlagen aus OpenStreetMap, mit Ansage", s.speedCameras) { v -> vm.setSpeedCameras(v) }
+            if (s.speedCameras) {
+                Toggle("Blitzer.de-Daten", "Zusätzliche feste Blitzer aus der Blitzer.de-Karte (inoffizielle Schnittstelle)", s.blitzerDe) { v -> vm.setBlitzerDe(v) }
+                if (s.blitzerDe) {
+                    Toggle("Mobile Blitzer", "Gemeldete mobile Kontrollen und Blitzeranhänger, alle 20 Minuten aktualisiert", s.mobileCameras) { v -> vm.setMobileCameras(v) }
+                }
+            }
             Text(
                 "Hinweis: In Deutschland verbietet § 23 Abs. 1c StVO dem Fahrer, während der Fahrt Blitzerwarner zu nutzen " +
                     "(75 € und ein Punkt). Ist der Schalter aus, werden keine Blitzerdaten geladen, angezeigt oder angesagt.",

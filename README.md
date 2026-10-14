@@ -6,7 +6,7 @@ Konzept und Entscheidungen: [docs/Uebergabe_Navi_App.md](docs/Uebergabe_Navi_App
 ## Funktionen
 - **Karte:** OpenStreetMap-Vektorkacheln (OpenFreeMap, Schema OpenMapTiles), gerendert mit MapLibre Native, eigener Kartenstil
 - **Designs:** *Void* (schwarz, Grautöne, rote Akzente, Dot-Matrix) und *Hell* (Papier-Weiß) – plus *Auto* (folgt dem Dunkelmodus des Systems)
-- **Kartenebenen:** Satellitenbild per Knopf auf der Karte (TomTom mit Schlüssel, sonst Esri World Imagery), 3D-Gebäude, Gelände-Relief aus Höhendaten, Ampeln aus OpenStreetMap
+- **Kartenebenen:** Satellitenbild per Knopf auf der Karte (Esri World Imagery, wahlweise TomTom), 3D-Gebäude, Gelände-Relief aus Höhendaten, Ampeln aus OpenStreetMap
 - **GPS:** Position mit Fahrtrichtung, Karte dreht in Fahrtrichtung (abschaltbar), 3D-Ansicht in der Navigation
 - **Suche:** mit TomTom-Schlüssel schnelle TomTom-Suche, sonst Photon; Treffer aus Favoriten/Verlauf sofort; die 5 zuletzt gesuchten Ziele; Zuhause/Arbeit; langer Druck auf die Karte setzt ein Ziel; `geo:`-Links aus anderen Apps
 - **Sonderziele:** Tankstelle, Ladestation, Parkplatz, Rastplatz, Supermarkt, Restaurant, Café, Apotheke, Krankenhaus, Hotel, Werkstatt u. a. – in der Nähe oder während der Navigation entlang der Route
@@ -16,7 +16,8 @@ Konzept und Entscheidungen: [docs/Uebergabe_Navi_App.md](docs/Uebergabe_Navi_App
 - **Offline-Karten:** Bereich auf der Karte wählen und herunterladen (Suche und Routing brauchen weiter Internet)
 - **Android Auto:** Karte, Abbiegehinweise und Ankunftszeit im Auto-Display, Zielsuche und Favoriten
 - **Verkehr (TomTom):** Verkehrslage als Overlay in den Farben des Designs (oder TomTom-Originalfarben), Unfälle, Stauenden, Baustellen und Sperrungen auf der Karte und als Warnung mit Ansage entlang der Route
-- **Blitzer:** feste Anlagen aus OSM (`highway=speed_camera`), **standardmäßig AUS**, Schalter im Menü (Einstellungen). Ist er aus, werden keine Blitzerdaten geladen, gezeigt oder angesagt (§ 23 Abs. 1c StVO beachten)
+- **Blitzer:** feste Anlagen aus OSM (`highway=speed_camera`) und optional feste und mobile Blitzer von Blitzer.de (inoffizielle Schnittstelle der öffentlichen Karte, nur privat), **standardmäßig AUS**, Schalter im Menü. Geladen wird in Kacheln von ca. 20 × 20 km, damit beim Verschieben keine Lücken entstehen.
+- **Fortschrittsbalken:** am linken Rand während der Navigation – Blitzer, Staus, Baustellen und Meldungen der nächsten 30 km, Zwischenziele und Ziel Ist er aus, werden keine Blitzerdaten geladen, gezeigt oder angesagt (§ 23 Abs. 1c StVO beachten)
 - **Updates:** automatische Prüfung beim Start gegen die GitHub-Releases, Changelog, Download und Installation direkt aus der App
 
 ## APK herunterladen

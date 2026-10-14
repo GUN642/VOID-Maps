@@ -289,6 +289,13 @@ class MapController(private val context: Context) {
         push(MapStyle.SIGNALS, signalJson)
     }
 
+    /** Puts the north arrow at the right edge, [topPx] below the top of the map (under the search bar). */
+    fun setCompassTop(topPx: Int, rightPx: Int) {
+        val ui = map?.uiSettings ?: return
+        ui.setCompassGravity(Gravity.TOP or Gravity.END)
+        ui.setCompassMargins(0, topPx, rightPx, 0)
+    }
+
     /** Visible area of the map (for offline downloads). */
     fun visibleBounds(): BBox? {
         val m = map ?: return null
@@ -317,10 +324,10 @@ class MapController(private val context: Context) {
             pointFeature(
                 h.point,
                 JSONObject().put("icon", h.type.icon).put("id", h.id)
-                    .put("rank", if (h.type == HazardType.SPEED_CAMERA) 1 else 0),
+                    .put("rank", if (h.type.isCamera) 1 else 0),
             )
         }
-        val lines = list.filter { it.line.size >= 2 && it.type != HazardType.SPEED_CAMERA }.map { lineFeature(it.line, JSONObject()) }
+        val lines = list.filter { it.line.size >= 2 && !it.type.isCamera }.map { lineFeature(it.line, JSONObject()) }
         hazardJson = featureCollection(points)
         hazardLineJson = featureCollection(lines)
         push(MapStyle.HAZARDS, hazardJson)

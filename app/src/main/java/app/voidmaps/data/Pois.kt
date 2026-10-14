@@ -43,10 +43,7 @@ enum class PoiCategory(val label: String, val filters: List<String>) {
 }
 
 object Pois {
-    private const val OVERPASS = "https://overpass-api.de/api/interpreter"
-
-    private fun query(q: String): JSONObject =
-        JSONObject(Http.post(OVERPASS, "data=" + Http.enc(q), "application/x-www-form-urlencoded", 30_000))
+    private fun query(q: String): JSONObject = Overpass.query(q)
 
     /** Charging stations of the selected networks inside the boxes. */
     fun chargers(boxes: List<BBox>, operators: Set<ChargeOperator>): List<Poi> {

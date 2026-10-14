@@ -1,5 +1,7 @@
 package app.voidmaps.ui
 
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -29,7 +31,24 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.offset
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntOffset
+import app.voidmaps.map.MapIcons
+import app.voidmaps.ui.theme.mapPalette
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -48,10 +67,18 @@ import app.voidmaps.ui.theme.dotNumber
 import app.voidmaps.ui.theme.headingStyle
 
 @Composable
-fun NavigationOverlay(vm: MainViewModel, settings: AppSettings, s: NavState) {
+fun NavigationOverlay(vm: MainViewModel, settings: AppSettings, s: NavState, onTopMeasured: (Int) -> Unit = {}) {
     val c = VoidTheme.colors
+    val density = LocalDensity.current
+    var topBottom by remember { mutableFloatStateOf(0f) }
+    var bottomTop by remember { mutableFloatStateOf(0f) }
     Box(Modifier.fillMaxSize()) {
-        Column(Modifier.statusBarsPadding().padding(horizontal = 12.dp, vertical = 8.dp)) {
+        Column(
+            Modifier.statusBarsPadding().padding(horizontal = 12.dp, vertical = 8.dp).onGloballyPositioned {
+                topBottom = it.boundsInRoot().bottom
+                onTopMeasured(topBottom.toInt())
+            },
+        ) {
             ManeuverCard(s)
             s.faster?.let { f ->
                 Spacer(Modifier.height(8.dp))
@@ -78,7 +105,22 @@ fun NavigationOverlay(vm: MainViewModel, settings: AppSettings, s: NavState) {
             MapButton(Icons.Outlined.Search, "Zwischenziel oder Sonderziel suchen", onClick = { vm.openSearch(Pick.STOP) })
         }
 
-        Column(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(12.dp)) {
+        // Route progress on the left edge: cameras, jams and incidents ahead.
+        if (topBottom > 0 && bottomTop - topBottom > with(density) { 160.dp.toPx() }) {
+            val gap = with(density) { 12.dp.toPx() }
+            RouteProgressBar(
+                s, settings,
+                Modifier
+                    .offset { IntOffset(with(density) { 6.dp.roundToPx() }, (topBottom + gap).toInt()) }
+                    .width(56.dp)
+                    .height(with(density) { (bottomTop - topBottom - 2 * gap).toDp() }),
+            )
+        }
+
+        Column(
+            Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(12.dp)
+                .onGloballyPositioned { bottomTop = it.boundsInRoot().top },
+        ) {
             Row(verticalAlignment = Alignment.Bottom, modifier = Modifier.fillMaxWidth()) {
                 SpeedBubble(s.speedKmh)
                 Spacer(Modifier.weight(1f))
@@ -187,13 +229,13 @@ private fun ManeuverCard(s: NavState) {
 @Composable
 fun WarningBanner(type: HazardType, description: String, distance: Double) {
     val c = VoidTheme.colors
-    val color = if (type == HazardType.SPEED_CAMERA) Color(0xFF111111) else c.warn
+    val color = if (type.isCamera) Color(0xFF111111) else c.warn
     Row(
         Modifier.fillMaxWidth().shadow(8.dp, RoundedCornerShape(20.dp)).clip(RoundedCornerShape(20.dp))
             .background(color).padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(Modifier.size(10.dp).clip(CircleShape).background(if (type == HazardType.SPEED_CAMERA) c.warn else Color.White))
+        Box(Modifier.size(10.dp).clip(CircleShape).background(if (type.isCamera) c.warn else Color.White))
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Text(type.label.uppercase(), style = headingStyle(20), color = Color.White)
@@ -226,7 +268,7 @@ private fun BottomBar(s: NavState, onStop: () -> Unit) {
     MapCard(Modifier.fillMaxWidth()) {
         Row(Modifier.padding(start = 22.dp, end = 10.dp, top = 14.dp, bottom = 14.dp), verticalAlignment = Alignment.CenterVertically) {
             Stat(Format.clock(s.eta), "Ankunft", Modifier.weight(1f), highlight = true)
-            Stat(Format.duration(s.remainingTime), "Restzeit", Modifier.weight(1f))
+            Stat(Format.hhmm(s.remainingTime), "Restzeit", Modifier.weight(1f))
             Stat(Format.distance(s.remainingDistance), "Strecke", Modifier.weight(1f))
             Box(
                 Modifier.size(52.dp).clip(CircleShape).background(c.surfaceHigh).clickable(onClick = onStop),
@@ -254,6 +296,78 @@ private fun ArrivedBar(s: NavState, onStop: () -> Unit) {
             Text(s.destination.name, style = MaterialTheme.typography.bodyLarge, color = c.textMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Spacer(Modifier.height(14.dp))
             Pill("Beenden", selected = true, onClick = onStop, filledColor = c.accent, modifier = Modifier.fillMaxWidth())
+        }
+    }
+}
+
+@Composable
+private fun RouteProgressBar(s: NavState, settings: AppSettings, modifier: Modifier) {
+    val c = VoidTheme.colors
+    val context = LocalContext.current
+    val design = VoidTheme.design
+    val palette = mapPalette(design)
+    val icons = remember(design) { MapIcons.all(context, palette).mapValues { it.value.asImageBitmap() } }
+    val along = s.snap?.along ?: 0.0
+    // The bar shows the next 30 km, or the rest of the route when that is shorter.
+    val horizon = s.remainingDistance.coerceIn(1_000.0, 30_000.0)
+    val events = s.routeHazards.filter { e ->
+        (settings.speedCameras || !e.hazard.type.isCamera) &&
+            (e.endAlong ?: e.along) >= along - 10 && e.along - along <= horizon
+    }
+    val next = events.filter { it.along >= along - 10 }.minByOrNull { it.along }
+    val stopsAhead = s.route.waypointAlong.filter { it > along && it - along <= horizon }
+    BoxWithConstraints(modifier) {
+        val dens = LocalDensity.current
+        val h = constraints.maxHeight.toFloat()
+        val top = with(dens) { 22.dp.toPx() }
+        val bottom = h - with(dens) { 54.dp.toPx() }
+        val cx = constraints.maxWidth / 2f
+        fun y(d: Double): Float = bottom - ((d / horizon).coerceIn(0.0, 1.0) * (bottom - top)).toFloat()
+        val heavy = Color(android.graphics.Color.parseColor(palette.trafficHeavy))
+        val amber = Color(0xFFFFB800)
+        Canvas(Modifier.fillMaxSize()) {
+            val w = 6.dp.toPx()
+            drawLine(c.textMuted.copy(alpha = 0.35f), Offset(cx, top), Offset(cx, bottom), strokeWidth = w, cap = StrokeCap.Round)
+            events.forEach { e ->
+                val end = e.endAlong ?: return@forEach
+                val color = when (e.hazard.type) {
+                    HazardType.JAM -> heavy
+                    HazardType.ROADWORKS, HazardType.LANE_CLOSED -> amber
+                    else -> c.warn
+                }
+                drawLine(color, Offset(cx, y((e.along - along).coerceAtLeast(0.0))), Offset(cx, y(end - along)), strokeWidth = w, cap = StrokeCap.Round)
+            }
+            stopsAhead.forEach { a ->
+                drawCircle(c.surface, 7.dp.toPx(), Offset(cx, y(a - along)))
+                drawCircle(c.accent, 7.dp.toPx(), Offset(cx, y(a - along)), style = Stroke(3.dp.toPx()))
+            }
+            if (s.remainingDistance <= horizon) {
+                val yd = y(s.remainingDistance)
+                drawCircle(c.accent, 8.dp.toPx(), Offset(cx, yd))
+                drawCircle(c.surface, 3.dp.toPx(), Offset(cx, yd))
+            }
+        }
+        val iconPx = with(dens) { 24.dp.roundToPx() }
+        events.forEach { e ->
+            val bmp = icons[e.hazard.type.icon] ?: return@forEach
+            val yy = y((e.along - along).coerceAtLeast(0.0))
+            Image(
+                bmp, e.hazard.type.label,
+                Modifier.offset { IntOffset((cx - iconPx / 2f).toInt(), (yy - iconPx / 2f).toInt()) }.size(24.dp),
+            )
+        }
+        Text(
+            Format.distance(horizon).uppercase(), style = MaterialTheme.typography.labelSmall, color = c.textMuted,
+            modifier = Modifier.align(Alignment.TopCenter),
+        )
+        Column(Modifier.align(Alignment.BottomCenter), horizontalAlignment = Alignment.CenterHorizontally) {
+            Icon(Icons.Outlined.Navigation, null, tint = c.accent, modifier = Modifier.size(22.dp))
+            Box(Modifier.clip(RoundedCornerShape(8.dp)).background(c.surface.copy(alpha = 0.9f)).padding(horizontal = 4.dp, vertical = 1.dp)) {
+                Text(
+                    Format.distance(if (next != null) (next.along - along).coerceAtLeast(0.0) else s.remainingDistance).uppercase(),
+                    style = MaterialTheme.typography.labelSmall, color = c.text, maxLines = 1,
+                )
+            }
         }
     }
 }

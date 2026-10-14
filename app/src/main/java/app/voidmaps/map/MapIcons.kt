@@ -28,6 +28,7 @@ object MapIcons {
             "hz-danger" to badge(d, amber, ring, Color.BLACK, Glyph.BANG),
             "hz-weather" to badge(d, Color.parseColor("#3D7BFF"), ring, Color.WHITE, Glyph.DROP),
             "hz-camera" to badge(d, if (p.dark) Color.parseColor("#111111") else Color.parseColor("#1A1A1A"), warn, Color.WHITE, Glyph.CAMERA),
+            "hz-camera-mobile" to badge(d, Color.parseColor("#1A1A1A"), amber, amber, Glyph.CAMERA),
             "dest" to destination(d, Color.parseColor(p.route), ring),
             "stop" to stop(d, Color.parseColor(p.route), ring),
             "signal" to signal(d, p.dark),

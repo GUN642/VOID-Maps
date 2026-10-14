@@ -18,7 +18,9 @@ import androidx.car.app.model.SearchTemplate
 import androidx.car.app.model.Template
 import androidx.car.app.navigation.NavigationManager
 import androidx.car.app.navigation.NavigationManagerCallback
+import androidx.car.app.navigation.model.LaneDirection
 import androidx.car.app.navigation.model.Maneuver
+import androidx.car.app.navigation.model.Lane as CarLane
 import androidx.car.app.navigation.model.MessageInfo
 import androidx.car.app.navigation.model.NavigationTemplate
 import androidx.car.app.navigation.model.RoutingInfo
@@ -32,6 +34,7 @@ import app.voidmaps.VoidMapsApp
 import app.voidmaps.data.Format
 import app.voidmaps.data.Geo
 import app.voidmaps.data.GeoPoint
+import app.voidmaps.data.LaneDir
 import app.voidmaps.data.ManeuverKind
 import app.voidmaps.data.Place
 import app.voidmaps.data.RouteOptions
@@ -215,11 +218,45 @@ class CarNavScreen(carContext: CarContext, private val renderer: CarMapRenderer)
         return mb.build()
     }
 
+    private fun laneShape(d: LaneDir): Int = when (d) {
+        LaneDir.STRAIGHT -> LaneDirection.SHAPE_STRAIGHT
+        LaneDir.SLIGHT_RIGHT -> LaneDirection.SHAPE_SLIGHT_RIGHT
+        LaneDir.RIGHT -> LaneDirection.SHAPE_NORMAL_RIGHT
+        LaneDir.SHARP_RIGHT -> LaneDirection.SHAPE_SHARP_RIGHT
+        LaneDir.SLIGHT_LEFT -> LaneDirection.SHAPE_SLIGHT_LEFT
+        LaneDir.LEFT -> LaneDirection.SHAPE_NORMAL_LEFT
+        LaneDir.SHARP_LEFT -> LaneDirection.SHAPE_SHARP_LEFT
+        LaneDir.UTURN -> LaneDirection.SHAPE_U_TURN_LEFT
+    }
+
+    private fun laneKind(d: LaneDir): ManeuverKind = when (d) {
+        LaneDir.STRAIGHT -> ManeuverKind.STRAIGHT
+        LaneDir.SLIGHT_RIGHT -> ManeuverKind.SLIGHT_RIGHT
+        LaneDir.RIGHT -> ManeuverKind.RIGHT
+        LaneDir.SHARP_RIGHT -> ManeuverKind.SHARP_RIGHT
+        LaneDir.SLIGHT_LEFT -> ManeuverKind.SLIGHT_LEFT
+        LaneDir.LEFT -> ManeuverKind.LEFT
+        LaneDir.SHARP_LEFT -> ManeuverKind.SHARP_LEFT
+        LaneDir.UTURN -> ManeuverKind.UTURN
+    }
+
     private fun routingInfo(s: NavState): RoutingInfo? {
         val m = s.route.maneuvers.getOrNull(s.next) ?: return null
         val cue = m.street ?: m.text.trimEnd('.').ifBlank { s.destination.name }
         val step = Step.Builder(cue).setManeuver(carManeuver(m.kind, m.exit))
         m.street?.let { step.setRoad(it) }
+        s.lanes?.let { section ->
+            runCatching {
+                section.lanes.forEach { lane ->
+                    val lb = CarLane.Builder()
+                    lane.directions.forEach { d ->
+                        lb.addDirection(LaneDirection.create(laneShape(d), lane.recommended && (lane.follow == null || d == lane.follow)))
+                    }
+                    step.addLane(lb.build())
+                }
+                step.setLanesImage(CarIcon.Builder(IconCompat.createWithBitmap(CarIcons.lanes(section, ::laneKind))).build())
+            }
+        }
         val info = RoutingInfo.Builder().setCurrentStep(step.build(), distance(s.distanceToNext))
         s.route.maneuvers.getOrNull(s.next + 1)?.let { after ->
             if (after.kind != ManeuverKind.STRAIGHT) {

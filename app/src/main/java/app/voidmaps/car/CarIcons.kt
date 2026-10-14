@@ -16,30 +16,55 @@ object CarIcons {
 
     fun maneuver(kind: ManeuverKind): Bitmap {
         val bmp = Bitmap.createBitmap(SIZE, SIZE, Bitmap.Config.ARGB_8888)
+        draw(Canvas(bmp), kind, 0f, SIZE.toFloat(), Color.WHITE)
+        return bmp
+    }
+
+    /** Lane strip for the car display: one cell per lane, lanes to use in white, others dimmed. */
+    fun lanes(section: app.voidmaps.data.LaneSection, kindOf: (app.voidmaps.data.LaneDir) -> ManeuverKind): Bitmap {
+        val cell = 96
+        val bmp = Bitmap.createBitmap(cell * section.lanes.size, cell, Bitmap.Config.ARGB_8888)
         val c = Canvas(bmp)
+        section.lanes.forEachIndexed { i, lane ->
+            val dirs = lane.directions.sortedBy { lane.recommended && (lane.follow == null || it == lane.follow) }
+            dirs.forEach { d ->
+                val active = lane.recommended && (lane.follow == null || d == lane.follow)
+                draw(c, kindOf(d), i * cell + cell * 0.1f, cell * 0.8f, if (active) Color.WHITE else Color.argb(90, 255, 255, 255), top = cell * 0.1f)
+            }
+        }
+        return bmp
+    }
+
+    private fun draw(c: Canvas, kind: ManeuverKind, left: Float, size: Float, color: Int, top: Float = 0f) {
         val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.WHITE
+            this.color = color
             style = Paint.Style.STROKE
-            strokeWidth = SIZE * 0.12f
+            strokeWidth = size * 0.12f
             strokeCap = Paint.Cap.ROUND
             strokeJoin = Paint.Join.ROUND
         }
-        val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
+        val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { this.color = color }
+        c.save()
+        c.translate(left, top)
+        c.scale(size / SIZE, size / SIZE)
         when (kind) {
             ManeuverKind.ARRIVE -> {
+                stroke.strokeWidth = SIZE * 0.12f
                 c.drawCircle(SIZE / 2f, SIZE / 2f, SIZE * 0.3f, stroke)
                 c.drawCircle(SIZE / 2f, SIZE / 2f, SIZE * 0.12f, fill)
             }
             ManeuverKind.ROUNDABOUT -> {
+                stroke.strokeWidth = SIZE * 0.12f
                 c.drawCircle(SIZE / 2f, SIZE * 0.42f, SIZE * 0.2f, stroke)
                 c.drawLine(SIZE / 2f, SIZE * 0.94f, SIZE / 2f, SIZE * 0.62f, stroke)
             }
             else -> {
+                stroke.strokeWidth = SIZE * 0.12f
                 val (pts, mirror) = shape(kind)
                 arrow(c, if (mirror) pts.map { (x, y) -> 1f - x to y } else pts, stroke, fill)
             }
         }
-        return bmp
+        c.restore()
     }
 
     private fun shape(kind: ManeuverKind): Pair<List<Pair<Float, Float>>, Boolean> = when (kind) {

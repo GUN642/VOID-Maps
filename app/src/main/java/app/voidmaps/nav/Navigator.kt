@@ -63,6 +63,8 @@ data class NavState(
     val faster: FasterRoute? = null,
     /** Metres to the next intermediate stop, if there is one. */
     val nextStopDistance: Double? = null,
+    /** Lanes to use at the next junction, when the route has lane data. */
+    val lanes: app.voidmaps.data.LaneSection? = null,
 ) {
     val eta: Long get() = System.currentTimeMillis() + (remainingTime * 1000).toLong()
 }
@@ -282,6 +284,7 @@ object Navigator {
             warning = warning,
             faster = faster,
             nextStopDistance = nextStopDistance,
+            lanes = route.lanesAt(along, if (speed > 22) 900.0 else 450.0),
         )
         _state.value = updated
 

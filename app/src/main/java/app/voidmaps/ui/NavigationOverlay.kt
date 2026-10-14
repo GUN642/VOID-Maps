@@ -59,6 +59,9 @@ import androidx.compose.ui.unit.dp
 import app.voidmaps.data.AppSettings
 import app.voidmaps.data.Format
 import app.voidmaps.data.HazardType
+import app.voidmaps.data.LaneDir
+import app.voidmaps.data.LaneSection
+import app.voidmaps.data.ManeuverKind
 import app.voidmaps.data.NavView
 import app.voidmaps.nav.NavState
 import app.voidmaps.nav.Navigator
@@ -80,6 +83,10 @@ fun NavigationOverlay(vm: MainViewModel, settings: AppSettings, s: NavState, onT
             },
         ) {
             ManeuverCard(s)
+            s.lanes?.let { lanes ->
+                Spacer(Modifier.height(6.dp))
+                LaneStrip(lanes)
+            }
             s.faster?.let { f ->
                 Spacer(Modifier.height(8.dp))
                 FasterRouteCard(f.savedSeconds, onAccept = { Navigator.acceptFaster() }, onDecline = { Navigator.declineFaster() })
@@ -367,6 +374,51 @@ private fun RouteProgressBar(s: NavState, settings: AppSettings, modifier: Modif
                     Format.distance(if (next != null) (next.along - along).coerceAtLeast(0.0) else s.remainingDistance).uppercase(),
                     style = MaterialTheme.typography.labelSmall, color = c.text, maxLines = 1,
                 )
+            }
+        }
+    }
+}
+
+private fun laneKind(d: LaneDir): ManeuverKind = when (d) {
+    LaneDir.STRAIGHT -> ManeuverKind.STRAIGHT
+    LaneDir.SLIGHT_RIGHT -> ManeuverKind.SLIGHT_RIGHT
+    LaneDir.RIGHT -> ManeuverKind.RIGHT
+    LaneDir.SHARP_RIGHT -> ManeuverKind.SHARP_RIGHT
+    LaneDir.SLIGHT_LEFT -> ManeuverKind.SLIGHT_LEFT
+    LaneDir.LEFT -> ManeuverKind.LEFT
+    LaneDir.SHARP_LEFT -> ManeuverKind.SHARP_LEFT
+    LaneDir.UTURN -> ManeuverKind.UTURN
+}
+
+/** Lane assistant: one box per lane, the lanes to use lit up. */
+@Composable
+private fun LaneStrip(section: LaneSection) {
+    val c = VoidTheme.colors
+    Row(
+        Modifier.fillMaxWidth().shadow(8.dp, RoundedCornerShape(20.dp)).clip(RoundedCornerShape(20.dp))
+            .background(if (c.isDark) c.surface else Color(0xFF1A1A1A)).padding(horizontal = 10.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        section.lanes.forEachIndexed { i, lane ->
+            if (i > 0) {
+                Canvas(Modifier.width(6.dp).height(40.dp)) {
+                    drawLine(
+                        Color.White.copy(alpha = 0.35f), Offset(size.width / 2, 0f), Offset(size.width / 2, size.height),
+                        strokeWidth = 2.dp.toPx(), pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(8f, 8f)),
+                    )
+                }
+            }
+            Box(
+                Modifier.width(44.dp).height(48.dp).clip(RoundedCornerShape(12.dp))
+                    .background(if (lane.recommended) c.accent.copy(alpha = 0.28f) else Color.Transparent),
+                contentAlignment = Alignment.Center,
+            ) {
+                // Directions not to take first, the one to follow on top.
+                lane.directions.sortedBy { lane.recommended && (lane.follow == null || it == lane.follow) }.forEach { d ->
+                    val active = lane.recommended && (lane.follow == null || d == lane.follow)
+                    ManeuverIcon(laneKind(d), if (active) Color.White else Color.White.copy(alpha = 0.3f), Modifier.size(34.dp))
+                }
             }
         }
     }

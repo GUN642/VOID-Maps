@@ -21,6 +21,15 @@ data class Maneuver(
     val pointIndex: Int,
 )
 
+/** Direction a lane leads to (TomTom lane guidance). */
+enum class LaneDir { STRAIGHT, SLIGHT_RIGHT, RIGHT, SHARP_RIGHT, SLIGHT_LEFT, LEFT, SHARP_LEFT, UTURN }
+
+/** One lane: where it leads and whether the route continues on it. */
+data class Lane(val directions: List<LaneDir>, val recommended: Boolean, val follow: LaneDir?)
+
+/** Lanes shown before a junction, between two points of the route. */
+data class LaneSection(val startIndex: Int, val endIndex: Int, val lanes: List<Lane>)
+
 class Route(
     val points: List<GeoPoint>,
     val maneuvers: List<Maneuver>,
@@ -33,10 +42,26 @@ class Route(
     private val cumulativeTime: DoubleArray,
     /** Intermediate stops (Zwischenziele) in driving order. */
     val waypoints: List<GeoPoint> = emptyList(),
+    /** Lane guidance (only from TomTom routing). */
+    val laneSections: List<LaneSection> = emptyList(),
 ) {
     val line = Polyline(points)
     val distance: Double get() = line.length
     val maneuverAlong: DoubleArray = DoubleArray(maneuvers.size) { line.cumulative[maneuvers[it].pointIndex.coerceIn(0, points.size - 1)] }
+
+    /** Start and end (metres along the route) of each lane section. */
+    val laneAlong: List<Pair<Double, Double>> = laneSections.map {
+        line.cumulative[it.startIndex.coerceIn(0, points.size - 1)] to line.cumulative[it.endIndex.coerceIn(0, points.size - 1)]
+    }
+
+    /** Lane section to show at [along]: the one we are in, or one starting within [ahead] metres. */
+    fun lanesAt(along: Double, ahead: Double): LaneSection? {
+        for (i in laneSections.indices) {
+            val (a, b) = laneAlong[i]
+            if (along <= b && along >= a - ahead) return laneSections[i]
+        }
+        return null
+    }
 
     /** Metres from the start to each intermediate stop. */
     val waypointAlong: DoubleArray = run {
@@ -261,6 +286,7 @@ object Routing {
             .append("?key=").append(Http.enc(key))
             .append("&traffic=true&travelMode=car&routeType=fastest&instructionsType=text&language=de-DE")
         if (alternatives > 0) sb.append("&maxAlternatives=").append(alternatives)
+        sb.append("&sectionType=lanes")
         options.heading?.let { sb.append("&vehicleHeading=").append(it.toInt().coerceIn(0, 359)) }
         if (options.avoidTolls) sb.append("&avoid=tollRoads")
         if (options.avoidMotorways) sb.append("&avoid=motorways")
@@ -321,7 +347,44 @@ object Routing {
             points, maneuvers, duration, summary.optDouble("trafficDelayInSeconds", 0.0), "TomTom",
             Route.timeProfile(line, firstMarks, firstDeltas),
             waypoints,
+            parseLanes(route.optJSONArray("sections"), points.size),
         )
+    }
+
+    private fun laneDir(s: String): LaneDir? = when (s.uppercase()) {
+        "STRAIGHT" -> LaneDir.STRAIGHT
+        "SLIGHT_RIGHT" -> LaneDir.SLIGHT_RIGHT
+        "RIGHT" -> LaneDir.RIGHT
+        "SHARP_RIGHT" -> LaneDir.SHARP_RIGHT
+        "SLIGHT_LEFT" -> LaneDir.SLIGHT_LEFT
+        "LEFT" -> LaneDir.LEFT
+        "SHARP_LEFT" -> LaneDir.SHARP_LEFT
+        "U_TURN", "U_TURN_LEFT", "U_TURN_RIGHT", "UTURN" -> LaneDir.UTURN
+        else -> null
+    }
+
+    private fun parseLanes(sections: JSONArray?, size: Int): List<LaneSection> {
+        if (sections == null) return emptyList()
+        val out = ArrayList<LaneSection>()
+        for (i in 0 until sections.length()) {
+            val sec = sections.getJSONObject(i)
+            if (!sec.optString("sectionType").equals("LANES", ignoreCase = true)) continue
+            val lanesJson = sec.optJSONArray("lanes") ?: continue
+            val lanes = (0 until lanesJson.length()).map { j ->
+                val l = lanesJson.getJSONObject(j)
+                val dirs = l.optJSONArray("directions")?.let { d -> (0 until d.length()).mapNotNull { laneDir(d.getString(it)) } }.orEmpty()
+                val follow = l.optString("follow").takeIf { it.isNotBlank() }?.let { laneDir(it) }
+                Lane(dirs.ifEmpty { listOfNotNull(follow) }, follow != null, follow)
+            }
+            // Only useful when some lanes are recommended and others are not.
+            if (lanes.size < 2 || lanes.none { it.recommended } || lanes.all { it.recommended }) continue
+            out += LaneSection(
+                sec.optInt("startPointIndex").coerceIn(0, size - 1),
+                sec.optInt("endPointIndex").coerceIn(0, size - 1),
+                lanes,
+            )
+        }
+        return out
     }
 
     private fun tomtomKind(m: String) = when (m) {

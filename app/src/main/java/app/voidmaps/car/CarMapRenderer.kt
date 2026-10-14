@@ -17,7 +17,7 @@ import app.voidmaps.VoidMapsApp
 import app.voidmaps.data.NavView
 import app.voidmaps.map.Follow
 import app.voidmaps.map.MapController
-import app.voidmaps.map.StyleConfig
+import app.voidmaps.map.styleConfigFor
 import app.voidmaps.nav.HazardRepo
 import app.voidmaps.nav.LocationTracker
 import app.voidmaps.nav.Navigator
@@ -101,7 +101,7 @@ class CarMapRenderer(private val carContext: CarContext, private val lifecycle: 
                     val design = resolveDesign(s.theme, carContext.isDarkMode)
                     val colors = colorsFor(design)
                     ctrl.applyStyle(
-                        StyleConfig(mapPalette(design), s.tomtomKey, s.trafficLayer, s.trafficOriginalColors),
+                        styleConfigFor(s, mapPalette(design)),
                         colors.accent.toArgb(),
                         if (colors.isDark) android.graphics.Color.BLACK else android.graphics.Color.WHITE,
                     )

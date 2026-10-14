@@ -28,6 +28,10 @@ object HazardRepo {
     private val _chargers = MutableStateFlow<List<Poi>>(emptyList())
     val chargers: StateFlow<List<Poi>> = _chargers.asStateFlow()
 
+    private val _signals = MutableStateFlow<List<GeoPoint>>(emptyList())
+    val signals: StateFlow<List<GeoPoint>> = _signals.asStateFlow()
+    private val signalAreas = ArrayList<BBox>()
+
     private var lastViewFetch = 0L
     private var lastChargerFetch = 0L
     private var lastChargerCenter: GeoPoint? = null
@@ -63,6 +67,25 @@ object HazardRepo {
             lastChargerCenter = center
             loadChargers(listOf(clamped), operators, replace = false)
         }
+    }
+
+    /** Traffic lights around [center] (~3 km); areas already loaded are not fetched again. */
+    suspend fun loadSignals(center: GeoPoint) {
+        if (signalAreas.any { it.expand(-800.0).contains(center) }) return
+        val box = BBox.around(center, 3_000.0)
+        signalAreas += box
+        val list = withContext(Dispatchers.IO) { runCatching { Pois.trafficSignals(box) }.getOrNull() }
+        if (list == null) {
+            signalAreas.remove(box)
+            return
+        }
+        _signals.value = (_signals.value + list).distinct().takeLast(6000)
+        if (signalAreas.size > 40) signalAreas.removeAt(0)
+    }
+
+    fun clearSignals() {
+        _signals.value = emptyList()
+        signalAreas.clear()
     }
 
     fun clearChargers() {

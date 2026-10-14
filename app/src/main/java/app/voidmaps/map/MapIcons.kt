@@ -30,6 +30,7 @@ object MapIcons {
             "hz-camera" to badge(d, if (p.dark) Color.parseColor("#111111") else Color.parseColor("#1A1A1A"), warn, Color.WHITE, Glyph.CAMERA),
             "dest" to destination(d, Color.parseColor(p.route), ring),
             "stop" to stop(d, Color.parseColor(p.route), ring),
+            "signal" to signal(d, p.dark),
         ) + ChargeOperator.entries.associate { it.icon to charger(d, Color.parseColor(it.color), ring, it.letter) }
     }
 
@@ -49,6 +50,25 @@ object MapIcons {
         paint.textSize = 15 * d
         paint.typeface = Typeface.DEFAULT_BOLD
         c.drawText(letter, r, r - (paint.descent() + paint.ascent()) / 2, paint)
+        return bmp
+    }
+
+    /** Traffic light: dark pill with red, amber and green dots. */
+    private fun signal(d: Float, dark: Boolean): Bitmap {
+        val w = (11 * d).toInt()
+        val h = (24 * d).toInt()
+        val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        val c = Canvas(bmp)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        paint.color = if (dark) Color.parseColor("#3A3A3A") else Color.WHITE
+        c.drawRoundRect(RectF(0f, 0f, w.toFloat(), h.toFloat()), w / 2f, w / 2f, paint)
+        paint.color = Color.parseColor("#111111")
+        c.drawRoundRect(RectF(1.2f * d, 1.2f * d, w - 1.2f * d, h - 1.2f * d), w / 2f, w / 2f, paint)
+        val colors = listOf("#FF3B30", "#FFB800", "#30D158")
+        colors.forEachIndexed { i, col ->
+            paint.color = Color.parseColor(col)
+            c.drawCircle(w / 2f, h * (0.22f + i * 0.28f), 2.3f * d, paint)
+        }
         return bmp
     }
 

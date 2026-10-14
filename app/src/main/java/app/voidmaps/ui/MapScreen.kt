@@ -36,6 +36,7 @@ import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.MyLocation
 import androidx.compose.material.icons.outlined.ReportProblem
+import androidx.compose.material.icons.outlined.Satellite
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Work
@@ -79,7 +80,7 @@ import app.voidmaps.data.VoiceMode
 import app.voidmaps.map.Follow
 import app.voidmaps.map.MapController
 import app.voidmaps.map.OfflineMaps
-import app.voidmaps.map.StyleConfig
+import app.voidmaps.map.styleConfigFor
 import app.voidmaps.nav.HazardRepo
 import app.voidmaps.nav.LocationTracker
 import app.voidmaps.nav.Navigator
@@ -146,13 +147,10 @@ fun MapScreen(vm: MainViewModel, settings: AppSettings, design: Design, hasPermi
     // Map design and traffic layer.
     val palette = mapPalette(design)
     val puckBg = if (c.isDark) android.graphics.Color.BLACK else android.graphics.Color.WHITE
-    LaunchedEffect(mapReady, design, settings.tomtomKey, settings.trafficLayer, settings.trafficOriginalColors) {
+    val styleConfig = styleConfigFor(settings, palette)
+    LaunchedEffect(mapReady, styleConfig) {
         if (!mapReady) return@LaunchedEffect
-        controller.applyStyle(
-            StyleConfig(palette, settings.tomtomKey, settings.trafficLayer, settings.trafficOriginalColors),
-            accent = c.accent.toArgb(),
-            background = puckBg,
-        )
+        controller.applyStyle(styleConfig, accent = c.accent.toArgb(), background = puckBg)
     }
     LaunchedEffect(mapReady, hasPermission) {
         if (mapReady && hasPermission) controller.onPermissionGranted(c.accent.toArgb(), puckBg)
@@ -200,6 +198,10 @@ fun MapScreen(vm: MainViewModel, settings: AppSettings, design: Design, hasPermi
     val chargers by HazardRepo.chargers.collectAsState()
     LaunchedEffect(mapReady, incidents, cameras, settings.speedCameras) {
         if (mapReady) controller.setHazards(incidents + if (settings.speedCameras) cameras else emptyList())
+    }
+    val signals by HazardRepo.signals.collectAsState()
+    LaunchedEffect(mapReady, signals, settings.trafficSignals) {
+        if (mapReady) controller.setSignals(if (settings.trafficSignals) signals else emptyList())
     }
     LaunchedEffect(mapReady, chargers, settings.chargers, settings.chargerOperators) {
         if (mapReady) controller.setPois(if (settings.chargers) chargers.filter { it.operator in settings.chargerOperators } else emptyList())
@@ -285,6 +287,12 @@ fun MapScreen(vm: MainViewModel, settings: AppSettings, design: Design, hasPermi
     }
 }
 
+/** Switches between the drawn map and satellite imagery. */
+@Composable
+fun SatelliteButton(vm: MainViewModel, on: Boolean) {
+    MapButton(Icons.Outlined.Satellite, if (on) "Karte" else "Satellit", onClick = { vm.toggleSatellite() }, active = on)
+}
+
 /** Mute / only warnings / loud – one button cycling through the three modes. */
 @Composable
 fun VoiceButton(vm: MainViewModel, mode: VoiceMode) {
@@ -330,6 +338,7 @@ private fun BrowseOverlay(vm: MainViewModel, settings: AppSettings, hasPermissio
         }
 
         Column(Modifier.align(Alignment.CenterEnd).padding(end = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            SatelliteButton(vm, settings.satellite)
             VoiceButton(vm, settings.voiceMode)
         }
 

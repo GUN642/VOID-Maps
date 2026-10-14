@@ -52,6 +52,7 @@ class MapController(private val context: Context) {
     private var hazardLineJson: String = EMPTY
     private var destJson: String = EMPTY
     private var poiJson: String = EMPTY
+    private var signalJson: String = EMPTY
     private var hazardById: Map<String, Hazard> = emptyMap()
     private var poiById: Map<String, Poi> = emptyMap()
 
@@ -283,6 +284,11 @@ class MapController(private val context: Context) {
         push(MapStyle.POIS, poiJson)
     }
 
+    fun setSignals(points: List<GeoPoint>) {
+        signalJson = featureCollection(points.map { pointFeature(it, JSONObject()) })
+        push(MapStyle.SIGNALS, signalJson)
+    }
+
     /** Visible area of the map (for offline downloads). */
     fun visibleBounds(): BBox? {
         val m = map ?: return null
@@ -327,6 +333,7 @@ class MapController(private val context: Context) {
         push(MapStyle.HAZARD_LINES, hazardLineJson)
         push(MapStyle.DEST, destJson)
         push(MapStyle.POIS, poiJson)
+        push(MapStyle.SIGNALS, signalJson)
     }
 
     private fun push(source: String, json: String) {

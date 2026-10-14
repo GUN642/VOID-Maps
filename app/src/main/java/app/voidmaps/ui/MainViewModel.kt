@@ -163,6 +163,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
         }
+        // Traffic lights around the position while driving (areas already loaded are skipped).
+        viewModelScope.launch {
+            LocationTracker.location.collect { loc ->
+                if (loc != null && settings.value.trafficSignals && (mode == Mode.NAVIGATE || following)) {
+                    HazardRepo.loadSignals(GeoPoint(loc.latitude, loc.longitude))
+                }
+            }
+        }
         OfflineMaps.refresh(app)
     }
 
@@ -446,6 +454,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (s.hasTraffic || s.speedCameras) {
             viewModelScope.launch { HazardRepo.loadForView(box, center, s.tomtomKey, s.speedCameras) }
         }
+        if (s.trafficSignals && zoom >= 14) {
+            viewModelScope.launch { HazardRepo.loadSignals(center) }
+        }
         if (s.chargers && zoom >= 9) {
             viewModelScope.launch { HazardRepo.loadChargersForView(box, center, s.chargerOperators) }
         }
@@ -487,6 +498,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             delay(100)
             if (v.third >= 9) HazardRepo.loadChargersForView(v.first, v.second, ops, force = true)
         }
+    }
+
+    fun toggleSatellite() {
+        val on = !settings.value.satellite
+        update { setSatellite(on) }
+    }
+
+    fun setTrafficSignals(on: Boolean) {
+        update { this.setTrafficSignals(on) }
+        if (!on) HazardRepo.clearSignals()
     }
 
     fun setTomTomKey(key: String) {

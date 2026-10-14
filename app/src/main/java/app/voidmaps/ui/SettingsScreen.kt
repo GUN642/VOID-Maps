@@ -92,6 +92,10 @@ fun SettingsScreen(vm: MainViewModel, s: AppSettings, onBack: () -> Unit) {
             Group("Karte")
             Toggle("Fahrtrichtung oben", "Karte dreht sich mit, sonst Norden oben", s.headingUp) { v -> vm.update { setHeadingUp(v) } }
             Toggle("3D-Ansicht bei Navigation", "Geneigte Karte während der Zielführung", s.tilt3d) { v -> vm.update { setTilt(v) } }
+            Toggle("Satellitenbild", "Luftbild statt gezeichneter Karte (auch per Knopf auf der Karte)", s.satellite) { v -> vm.update { setSatellite(v) } }
+            Toggle("3D-Gebäude", "Gebäude mit Höhe, sichtbar beim Neigen der Karte", s.buildings3d) { v -> vm.update { setBuildings3d(v) } }
+            Toggle("Gelände-Relief", "Berge und Täler plastisch schattiert", s.terrain) { v -> vm.update { setTerrain(v) } }
+            Toggle("Ampeln", "Ampeln aus OpenStreetMap ab Straßenzoom", s.trafficSignals) { v -> vm.setTrafficSignals(v) }
 
             Group("Navigation")
             Label("Sprachansagen")
@@ -170,6 +174,7 @@ fun SettingsScreen(vm: MainViewModel, s: AppSettings, onBack: () -> Unit) {
             Text(
                 "Kartendaten © OpenStreetMap-Mitwirkende (ODbL). Kacheln: OpenFreeMap, Schema OpenMapTiles. " +
                     "Darstellung: MapLibre Native. Routing: Valhalla (FOSSGIS-Server). Suche: Photon (komoot). " +
+                    "Satellit: Esri World Imagery bzw. TomTom. Höhendaten: Terrain Tiles (Mapzen/AWS). " +
                     "Blitzer: Overpass API. Verkehr: © TomTom. Schriften: Doto & Space Mono (SIL Open Font License).",
                 color = c.textMuted, style = MaterialTheme.typography.bodyMedium,
             )
@@ -345,11 +350,7 @@ private fun ThemeTile(choice: ThemeChoice, selected: Boolean, onClick: () -> Uni
             contentAlignment = Alignment.Center,
         ) {
             val designs = if (choice == ThemeChoice.AUTO) listOf(Design.VOID, Design.HELL) else listOf(
-                when (choice) {
-                    ThemeChoice.HELL -> Design.HELL
-                    ThemeChoice.FARBE -> Design.FARBE
-                    else -> Design.VOID
-                },
+                if (choice == ThemeChoice.HELL) Design.HELL else Design.VOID,
             )
             Canvas(Modifier.size(52.dp).clip(RoundedCornerShape(14.dp))) {
                 designs.forEachIndexed { i, d ->

@@ -5,7 +5,8 @@ Konzept und Entscheidungen: [docs/Uebergabe_Navi_App.md](docs/Uebergabe_Navi_App
 
 ## Funktionen
 - **Karte:** OpenStreetMap-Vektorkacheln (OpenFreeMap, Schema OpenMapTiles), gerendert mit MapLibre Native, eigener Kartenstil
-- **Drei Designs:** *Void* (schwarz, Grautöne, rote Akzente, Dot-Matrix), *Hell* (Papier-Weiß) und *Farbe* (farbige Karte, violette Route) – plus *Auto* (folgt dem Dunkelmodus des Systems)
+- **Designs:** *Void* (schwarz, Grautöne, rote Akzente, Dot-Matrix) und *Hell* (Papier-Weiß) – plus *Auto* (folgt dem Dunkelmodus des Systems)
+- **Kartenebenen:** Satellitenbild per Knopf auf der Karte (TomTom mit Schlüssel, sonst Esri World Imagery), 3D-Gebäude, Gelände-Relief aus Höhendaten, Ampeln aus OpenStreetMap
 - **GPS:** Position mit Fahrtrichtung, Karte dreht in Fahrtrichtung (abschaltbar), 3D-Ansicht in der Navigation
 - **Suche:** mit TomTom-Schlüssel schnelle TomTom-Suche, sonst Photon; Treffer aus Favoriten/Verlauf sofort; die 5 zuletzt gesuchten Ziele; Zuhause/Arbeit; langer Druck auf die Karte setzt ein Ziel; `geo:`-Links aus anderen Apps
 - **Sonderziele:** Tankstelle, Ladestation, Parkplatz, Rastplatz, Supermarkt, Restaurant, Café, Apotheke, Krankenhaus, Hotel, Werkstatt u. a. – in der Nähe oder während der Navigation entlang der Route

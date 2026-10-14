@@ -11,11 +11,10 @@ import app.voidmaps.BuildConfig
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
-/** The three app designs. AUTO follows the system: VOID at night, HELL by day. */
+/** The app designs. AUTO follows the system: VOID at night, HELL by day. */
 enum class ThemeChoice(val label: String) {
     VOID("Void"),
     HELL("Hell"),
-    FARBE("Farbe"),
     AUTO("Auto"),
 }
 
@@ -50,6 +49,11 @@ data class AppSettings(
     /** Speed camera layer. Off by default – see § 23 Abs. 1c StVO. */
     val speedCameras: Boolean = false,
     val chargers: Boolean = false,
+    val satellite: Boolean = false,
+    val buildings3d: Boolean = true,
+    /** Relief shading from elevation data (MapLibre Native has no true 3D terrain yet). */
+    val terrain: Boolean = true,
+    val trafficSignals: Boolean = true,
     val chargerOperators: Set<ChargeOperator> = ChargeOperator.entries.toSet(),
     val tomtomKeyInput: String = "",
     val autoUpdateCheck: Boolean = true,
@@ -85,6 +89,10 @@ class SettingsRepository(private val context: Context) {
         val trafficOriginal = booleanPreferencesKey("traffic_original")
         val cameras = booleanPreferencesKey("speed_cameras")
         val chargers = booleanPreferencesKey("chargers")
+        val satellite = booleanPreferencesKey("satellite")
+        val buildings3d = booleanPreferencesKey("buildings3d")
+        val terrain = booleanPreferencesKey("terrain")
+        val signals = booleanPreferencesKey("traffic_signals")
         val chargerOperators = stringPreferencesKey("charger_operators")
         val tomtomKey = stringPreferencesKey("tomtom_key")
         val autoUpdate = booleanPreferencesKey("auto_update")
@@ -118,6 +126,10 @@ class SettingsRepository(private val context: Context) {
             trafficOriginalColors = p[K.trafficOriginal] ?: d.trafficOriginalColors,
             speedCameras = p[K.cameras] ?: d.speedCameras,
             chargers = p[K.chargers] ?: d.chargers,
+            satellite = p[K.satellite] ?: d.satellite,
+            buildings3d = p[K.buildings3d] ?: d.buildings3d,
+            terrain = p[K.terrain] ?: d.terrain,
+            trafficSignals = p[K.signals] ?: d.trafficSignals,
             chargerOperators = p[K.chargerOperators]?.split(',')
                 ?.mapNotNull { v -> ChargeOperator.entries.firstOrNull { it.name == v } }?.toSet()
                 ?: d.chargerOperators,
@@ -147,6 +159,10 @@ class SettingsRepository(private val context: Context) {
     suspend fun setTrafficOriginal(v: Boolean) = context.dataStore.edit { it[K.trafficOriginal] = v }
     suspend fun setSpeedCameras(v: Boolean) = context.dataStore.edit { it[K.cameras] = v }
     suspend fun setChargers(v: Boolean) = context.dataStore.edit { it[K.chargers] = v }
+    suspend fun setSatellite(v: Boolean) = context.dataStore.edit { it[K.satellite] = v }
+    suspend fun setBuildings3d(v: Boolean) = context.dataStore.edit { it[K.buildings3d] = v }
+    suspend fun setTerrain(v: Boolean) = context.dataStore.edit { it[K.terrain] = v }
+    suspend fun setTrafficSignals(v: Boolean) = context.dataStore.edit { it[K.signals] = v }
     suspend fun setChargerOperators(v: Set<ChargeOperator>) =
         context.dataStore.edit { it[K.chargerOperators] = v.joinToString(",") { o -> o.name } }
     suspend fun setTomTomKey(v: String) = context.dataStore.edit { it[K.tomtomKey] = v.trim() }

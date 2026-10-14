@@ -68,6 +68,7 @@ fun NavigationOverlay(vm: MainViewModel, settings: AppSettings, s: NavState) {
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             VoiceButton(vm, settings.voiceMode)
+            SatelliteButton(vm, settings.satellite)
             val (icon, label) = when (settings.navView) {
                 NavView.HEADING -> Icons.Outlined.Navigation to "Route oben"
                 NavView.NORTH -> Icons.Outlined.Explore to "Norden oben"

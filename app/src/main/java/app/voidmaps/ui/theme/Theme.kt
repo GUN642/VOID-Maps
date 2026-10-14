@@ -36,27 +36,25 @@ data class VoidColors(
     val divider: Color,
     val accent: Color,
     val onAccent: Color,
-    /** Second accent of the colourful design (chips, highlights); equals accent elsewhere. */
+    /** Second accent (chips, highlights). */
     val accent2: Color,
     val warn: Color,
     val dot: Color,
     val isDark: Boolean,
 )
 
-/** The three designs resolved (AUTO is mapped to VOID or HELL). */
-enum class Design { VOID, HELL, FARBE }
+/** The designs resolved (AUTO is mapped to VOID or HELL). */
+enum class Design { VOID, HELL }
 
 fun resolveDesign(choice: ThemeChoice, systemDark: Boolean): Design = when (choice) {
     ThemeChoice.VOID -> Design.VOID
     ThemeChoice.HELL -> Design.HELL
-    ThemeChoice.FARBE -> Design.FARBE
     ThemeChoice.AUTO -> if (systemDark) Design.VOID else Design.HELL
 }
 
 fun mapPalette(design: Design): MapPalette = when (design) {
     Design.VOID -> Palettes.VOID
     Design.HELL -> Palettes.HELL
-    Design.FARBE -> Palettes.FARBE
 }
 
 fun colorsFor(design: Design): VoidColors = when (design) {
@@ -86,20 +84,6 @@ fun colorsFor(design: Design): VoidColors = when (design) {
         accent2 = Color(0xFFD71921),
         warn = Color(0xFFD71921),
         dot = Color.Black.copy(alpha = 0.10f),
-        isDark = false,
-    )
-    Design.FARBE -> VoidColors(
-        background = Color(0xFFFFF6EA),
-        surface = Color(0xFFFFFFFF),
-        surfaceHigh = Color(0xFFFFE8C7),
-        text = Color(0xFF1F1835),
-        textMuted = Color(0xFF6F6684),
-        divider = Color(0xFF6C3BFF).copy(alpha = 0.14f),
-        accent = Color(0xFF6C3BFF),
-        onAccent = Color.White,
-        accent2 = Color(0xFFFF7A2F),
-        warn = Color(0xFFFF3D00),
-        dot = Color(0xFF6C3BFF).copy(alpha = 0.16f),
         isDark = false,
     )
 }

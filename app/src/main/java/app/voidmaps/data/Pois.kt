@@ -119,6 +119,13 @@ object Pois {
         return out.distinctBy { it.id }.sortedBy { Geo.distance(center, it.point) }.take(40)
     }
 
+    /** Traffic lights (highway=traffic_signals) inside [box]. */
+    fun trafficSignals(box: BBox): List<GeoPoint> {
+        val q = "[out:json][timeout:20];node[\"highway\"=\"traffic_signals\"](${box.minLat},${box.minLon},${box.maxLat},${box.maxLon});out skel;"
+        val arr = query(q).optJSONArray("elements") ?: return emptyList()
+        return (0 until arr.length()).mapNotNull { i -> point(arr.getJSONObject(i)) }
+    }
+
     private fun point(e: JSONObject): GeoPoint? {
         if (e.has("lat")) return GeoPoint(e.getDouble("lat"), e.getDouble("lon"))
         val c = e.optJSONObject("center") ?: return null

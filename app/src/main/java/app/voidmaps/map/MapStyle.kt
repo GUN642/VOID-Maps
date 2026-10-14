@@ -1,0 +1,399 @@
+package app.voidmaps.map
+
+import app.voidmaps.data.Http
+import org.json.JSONObject
+
+/** Colours of one map design. */
+data class MapPalette(
+    val dark: Boolean,
+    val background: String,
+    val water: String,
+    val waterLine: String,
+    val park: String,
+    val wood: String,
+    val landuse: String,
+    val building: String,
+    val minor: String,
+    val secondary: String,
+    val primary: String,
+    val trunk: String,
+    val motorway: String,
+    /** Road outlines; null draws roads without casing (VOID look). */
+    val casing: String?,
+    val motorwayCasing: String?,
+    val path: String,
+    val rail: String,
+    val boundary: String,
+    val label: String,
+    val labelHalo: String,
+    val place: String,
+    val route: String,
+    val routeCasing: String,
+    val trafficFree: String?,
+    val trafficSlow: String,
+    val trafficHeavy: String,
+    val trafficStop: String,
+    /** Draw traffic as dot rows (Nothing dot-matrix look) instead of solid lines. */
+    val trafficDots: Boolean,
+    val warn: String,
+)
+
+object Palettes {
+    val VOID = MapPalette(
+        dark = true,
+        background = "#000000",
+        water = "#0E1114",
+        waterLine = "#15191D",
+        park = "#060906",
+        wood = "#070A07",
+        landuse = "#040404",
+        building = "#131313",
+        minor = "#1D1D1D",
+        secondary = "#2A2A2A",
+        primary = "#383838",
+        trunk = "#4A4A4A",
+        motorway = "#646464",
+        casing = null,
+        motorwayCasing = null,
+        path = "#1A1A1A",
+        rail = "#222222",
+        boundary = "#3A3A3A",
+        label = "#8A8A8A",
+        labelHalo = "#000000",
+        place = "#E8E8E8",
+        route = "#D71921",
+        routeCasing = "#3A0407",
+        trafficFree = null,
+        trafficSlow = "#FFB800",
+        trafficHeavy = "#FF5A1F",
+        trafficStop = "#FF1F3D",
+        trafficDots = true,
+        warn = "#D71921",
+    )
+
+    val HELL = MapPalette(
+        dark = false,
+        background = "#F1F1EE",
+        water = "#D2DBE2",
+        waterLine = "#BFCAD3",
+        park = "#E1E7D9",
+        wood = "#D8E1CF",
+        landuse = "#ECEBE6",
+        building = "#E1E0DB",
+        minor = "#FFFFFF",
+        secondary = "#FFFFFF",
+        primary = "#FFFFFF",
+        trunk = "#F7F7F7",
+        motorway = "#DCDCDC",
+        casing = "#D3D2CD",
+        motorwayCasing = "#B5B5B2",
+        path = "#CFCFCA",
+        rail = "#C8C8C4",
+        boundary = "#B0B0AC",
+        label = "#6B6B6B",
+        labelHalo = "#F1F1EE",
+        place = "#111111",
+        route = "#D71921",
+        routeCasing = "#FFFFFF",
+        trafficFree = null,
+        trafficSlow = "#F2A900",
+        trafficHeavy = "#F25A1F",
+        trafficStop = "#B0001E",
+        trafficDots = true,
+        warn = "#D71921",
+    )
+
+    val FARBE = MapPalette(
+        dark = false,
+        background = "#F6F0E4",
+        water = "#9CD2F6",
+        waterLine = "#6DB7EA",
+        park = "#BFE4A6",
+        wood = "#A5D78C",
+        landuse = "#F1E8D8",
+        building = "#E8DAC6",
+        minor = "#FFFFFF",
+        secondary = "#FFF2A6",
+        primary = "#FFD45C",
+        trunk = "#FFAE45",
+        motorway = "#FF7F3F",
+        casing = "#D9CDB9",
+        motorwayCasing = "#D2582A",
+        path = "#C9A97F",
+        rail = "#A99BC4",
+        boundary = "#A07CC5",
+        label = "#4A4458",
+        labelHalo = "#FFFFFF",
+        place = "#251E3D",
+        route = "#6C3BFF",
+        routeCasing = "#2E1294",
+        trafficFree = "#2ECC71",
+        trafficSlow = "#FFB300",
+        trafficHeavy = "#FF5722",
+        trafficStop = "#C2185B",
+        trafficDots = false,
+        warn = "#FF3D00",
+    )
+}
+
+data class StyleConfig(
+    val palette: MapPalette,
+    /** TomTom key; traffic layers are only added when it is set and [traffic] is on. */
+    val tomtomKey: String,
+    val traffic: Boolean,
+    val trafficOriginal: Boolean,
+)
+
+/** Builds the MapLibre style JSON for the OpenMapTiles schema (OpenFreeMap tiles, no key needed). */
+object MapStyle {
+    const val ROUTE = "route"
+    const val HAZARDS = "hazards"
+    const val HAZARD_LINES = "hazard-lines"
+    const val DEST = "dest"
+    const val LABEL_ANCHOR = "place-village"
+
+    private const val TILES = "https://tiles.openfreemap.org/planet"
+    private const val GLYPHS = "https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf"
+    private val REGULAR = listOf("Noto Sans Regular")
+    private val BOLD = listOf("Noto Sans Bold")
+    private val EMPTY = mapOf("type" to "FeatureCollection", "features" to emptyList<Any>())
+
+    private fun zoomExp(vararg stops: Number): List<Any> =
+        listOf("interpolate", listOf("exponential", 1.5), listOf("zoom")) + stops.toList()
+
+    private fun cls(vararg values: String): List<Any> =
+        if (values.size == 1) listOf("==", listOf("get", "class"), values[0])
+        else listOf("match", listOf("get", "class"), values.toList(), true, false)
+
+    private val isLine = listOf("==", listOf("geometry-type"), "LineString")
+    private val isPolygon = listOf("==", listOf("geometry-type"), "Polygon")
+    private val name = listOf("coalesce", listOf("get", "name:de"), listOf("get", "name_de"), listOf("get", "name"))
+
+    fun build(c: StyleConfig): String {
+        val p = c.palette
+        val sources = linkedMapOf<String, Any>(
+            "omt" to mapOf("type" to "vector", "url" to TILES),
+            ROUTE to mapOf("type" to "geojson", "data" to EMPTY, "lineMetrics" to false),
+            HAZARDS to mapOf("type" to "geojson", "data" to EMPTY),
+            HAZARD_LINES to mapOf("type" to "geojson", "data" to EMPTY),
+            DEST to mapOf("type" to "geojson", "data" to EMPTY),
+        )
+        val showTraffic = c.traffic && c.tomtomKey.isNotBlank()
+        if (showTraffic) {
+            val key = Http.enc(c.tomtomKey)
+            sources["traffic"] = if (c.trafficOriginal) {
+                val style = if (p.dark) "relative0-dark" else "relative0"
+                mapOf(
+                    "type" to "raster",
+                    "tiles" to listOf("https://api.tomtom.com/traffic/map/4/tile/flow/$style/{z}/{x}/{y}.png?key=$key&tileSize=256"),
+                    "tileSize" to 256,
+                    "minzoom" to 6,
+                    "maxzoom" to 18,
+                    "attribution" to "© TomTom",
+                )
+            } else {
+                mapOf(
+                    "type" to "vector",
+                    "tiles" to listOf("https://api.tomtom.com/traffic/map/4/tile/flow/relative/{z}/{x}/{y}.pbf?key=$key"),
+                    "minzoom" to 6,
+                    "maxzoom" to 18,
+                    "attribution" to "© TomTom",
+                )
+            }
+        }
+
+        val layers = ArrayList<Map<String, Any>>()
+        layers += mapOf("id" to "background", "type" to "background", "paint" to mapOf("background-color" to p.background))
+        layers += fill("landuse", "landuse", p.landuse, cls("residential", "suburb", "neighbourhood", "commercial", "industrial", "retail"), minzoom = 9)
+        layers += fill("landcover-wood", "landcover", p.wood, cls("wood", "forest"))
+        layers += fill("landcover-grass", "landcover", p.park, cls("grass", "wetland"))
+        layers += fill("park", "park", p.park, null)
+        layers += fill("water", "water", p.water, null)
+        layers += mapOf(
+            "id" to "waterway", "type" to "line", "source" to "omt", "source-layer" to "waterway", "minzoom" to 8,
+            "paint" to mapOf("line-color" to p.waterLine, "line-width" to zoomExp(8, 0.5, 14, 2, 18, 6)),
+        )
+        layers += fill("building", "building", p.building, null, minzoom = 14)
+
+        // Roads: casings first, then fills, ordered from minor to major so motorways stay on top.
+        val roads = listOf(
+            Triple("minor", cls("minor", "service"), p.minor) to zoomExp(12, 0.5, 14, 2.5, 16, 7, 18, 18),
+            Triple("tertiary", cls("tertiary"), p.secondary) to zoomExp(9, 0.4, 12, 1.2, 14, 3.5, 16, 9, 18, 22),
+            Triple("secondary", cls("secondary"), p.secondary) to zoomExp(8, 0.5, 12, 1.6, 14, 4.5, 16, 11, 18, 26),
+            Triple("primary", cls("primary"), p.primary) to zoomExp(7, 0.5, 10, 1.4, 12, 2.4, 14, 5.5, 16, 13, 18, 30),
+            Triple("trunk", cls("trunk"), p.trunk) to zoomExp(5, 0.5, 9, 1.4, 12, 3, 14, 6.5, 16, 15, 18, 34),
+            Triple("motorway", cls("motorway"), p.motorway) to zoomExp(4, 0.6, 8, 1.4, 12, 3.4, 14, 7, 16, 16, 18, 36),
+        )
+        val minZoom = mapOf("minor" to 12, "tertiary" to 9, "secondary" to 8, "primary" to 7, "trunk" to 5, "motorway" to 4)
+        if (p.casing != null) {
+            for ((t, width) in roads) {
+                val (id, filter, _) = t
+                val color = if (id == "motorway" || id == "trunk") p.motorwayCasing ?: p.casing else p.casing
+                layers += mapOf(
+                    "id" to "road-$id-casing", "type" to "line", "source" to "omt", "source-layer" to "transportation",
+                    "minzoom" to (minZoom[id] ?: 0) + 1,
+                    "filter" to listOf("all", isLine, filter),
+                    "layout" to mapOf("line-cap" to "round", "line-join" to "round"),
+                    "paint" to mapOf("line-color" to color, "line-width" to scaleWidth(width, 1.5, 1.15)),
+                )
+            }
+        }
+        layers += mapOf(
+            "id" to "road-path", "type" to "line", "source" to "omt", "source-layer" to "transportation", "minzoom" to 14,
+            "filter" to listOf("all", isLine, cls("path", "track")),
+            "paint" to mapOf("line-color" to p.path, "line-width" to zoomExp(14, 0.8, 18, 2.5), "line-dasharray" to listOf(2, 1.5)),
+        )
+        for ((t, width) in roads) {
+            val (id, filter, color) = t
+            layers += mapOf(
+                "id" to "road-$id", "type" to "line", "source" to "omt", "source-layer" to "transportation",
+                "minzoom" to (minZoom[id] ?: 0),
+                "filter" to listOf("all", isLine, filter),
+                "layout" to mapOf("line-cap" to "round", "line-join" to "round"),
+                "paint" to mapOf("line-color" to color, "line-width" to width),
+            )
+        }
+        layers += mapOf(
+            "id" to "rail", "type" to "line", "source" to "omt", "source-layer" to "transportation", "minzoom" to 11,
+            "filter" to listOf("all", isLine, cls("rail", "transit")),
+            "paint" to mapOf("line-color" to p.rail, "line-width" to zoomExp(11, 0.6, 18, 2.4), "line-dasharray" to listOf(3, 2)),
+        )
+        layers += mapOf(
+            "id" to "boundary", "type" to "line", "source" to "omt", "source-layer" to "boundary",
+            "filter" to listOf("all", listOf("<=", listOf("get", "admin_level"), 4), listOf("!=", listOf("get", "maritime"), 1)),
+            "paint" to mapOf("line-color" to p.boundary, "line-width" to zoomExp(3, 0.6, 10, 1.4), "line-dasharray" to listOf(1, 2)),
+        )
+
+        if (showTraffic) layers += trafficLayer(p, c.trafficOriginal)
+
+        // Route and hazards sit above the roads but below the labels.
+        layers += mapOf(
+            "id" to "route-casing", "type" to "line", "source" to ROUTE,
+            "layout" to mapOf("line-cap" to "round", "line-join" to "round"),
+            "paint" to mapOf("line-color" to p.routeCasing, "line-width" to zoomExp(5, 5, 12, 9, 16, 16, 18, 28)),
+        )
+        layers += mapOf(
+            "id" to "route-line", "type" to "line", "source" to ROUTE,
+            "layout" to mapOf("line-cap" to "round", "line-join" to "round"),
+            "paint" to mapOf("line-color" to p.route, "line-width" to zoomExp(5, 3, 12, 6, 16, 11, 18, 20)),
+        )
+        layers += mapOf(
+            "id" to "hazard-lines", "type" to "line", "source" to HAZARD_LINES,
+            "layout" to mapOf("line-cap" to "round", "line-join" to "round"),
+            "paint" to mapOf(
+                "line-color" to p.warn, "line-opacity" to 0.85,
+                "line-width" to zoomExp(8, 2, 14, 4, 18, 8),
+                "line-dasharray" to listOf(0.1, 2.2),
+            ),
+        )
+
+        layers += mapOf(
+            "id" to "road-label", "type" to "symbol", "source" to "omt", "source-layer" to "transportation_name", "minzoom" to 13,
+            "filter" to isLine,
+            "layout" to mapOf(
+                "symbol-placement" to "line", "text-field" to name, "text-font" to REGULAR,
+                "text-size" to zoomExp(13, 10, 18, 14), "text-letter-spacing" to 0.04,
+            ),
+            "paint" to mapOf("text-color" to p.label, "text-halo-color" to p.labelHalo, "text-halo-width" to 1.4),
+        )
+        layers += mapOf(
+            "id" to "road-ref", "type" to "symbol", "source" to "omt", "source-layer" to "transportation_name",
+            "minzoom" to 8, "maxzoom" to 14,
+            "filter" to listOf("all", isLine, cls("motorway", "trunk"), listOf("has", "ref")),
+            "layout" to mapOf(
+                "symbol-placement" to "line", "symbol-spacing" to 500, "text-field" to listOf("get", "ref"),
+                "text-font" to BOLD, "text-size" to 10, "text-rotation-alignment" to "viewport",
+            ),
+            "paint" to mapOf("text-color" to p.place, "text-halo-color" to p.labelHalo, "text-halo-width" to 2),
+        )
+        layers += placeLabel("place-suburb", cls("suburb", "quarter", "neighbourhood"), 12, 11, 15, p.label, p.labelHalo, REGULAR, false)
+        layers += placeLabel(LABEL_ANCHOR, cls("village", "hamlet"), 11, 11, 15, p.label, p.labelHalo, REGULAR, false)
+        layers += placeLabel("place-town", cls("town"), 8, 11, 17, p.place, p.labelHalo, REGULAR, true)
+        layers += placeLabel("place-city", cls("city"), 4, 12, 22, p.place, p.labelHalo, BOLD, true)
+
+        layers += mapOf(
+            "id" to "hazard-icons", "type" to "symbol", "source" to HAZARDS,
+            "layout" to mapOf(
+                "icon-image" to listOf("get", "icon"),
+                "icon-allow-overlap" to true,
+                "icon-ignore-placement" to true,
+                "icon-size" to listOf("interpolate", listOf("linear"), listOf("zoom"), 8, 0.6, 14, 1.0),
+                "symbol-sort-key" to listOf("get", "rank"),
+            ),
+        )
+        layers += mapOf(
+            "id" to "dest-icon", "type" to "symbol", "source" to DEST,
+            "layout" to mapOf("icon-image" to "dest", "icon-allow-overlap" to true, "icon-ignore-placement" to true, "icon-anchor" to "center"),
+        )
+
+        val style = mapOf(
+            "version" to 8,
+            "name" to "VOID",
+            "glyphs" to GLYPHS,
+            "sources" to sources,
+            "layers" to layers,
+        )
+        return JSONObject(style).toString()
+    }
+
+    /** Widens the stop values of a zoom interpolation (used for road casings). */
+    private fun scaleWidth(expr: List<Any>, add: Double, factor: Double): List<Any> {
+        val head = expr.take(3)
+        val stops = expr.drop(3)
+        val out = ArrayList<Any>(head)
+        stops.forEachIndexed { i, v ->
+            out += if (i % 2 == 1) (v as Number).toDouble() * factor + add else v
+        }
+        return out
+    }
+
+    private fun fill(id: String, layer: String, color: String, filter: Any?, minzoom: Int = 0): Map<String, Any> {
+        val m = linkedMapOf<String, Any>(
+            "id" to id, "type" to "fill", "source" to "omt", "source-layer" to layer, "minzoom" to minzoom,
+            "paint" to mapOf("fill-color" to color, "fill-antialias" to false),
+        )
+        m["filter"] = if (filter != null) listOf("all", isPolygon, filter) else isPolygon
+        return m
+    }
+
+    private fun placeLabel(
+        id: String, filter: Any, minzoom: Int, minSize: Int, maxSize: Int, color: String, halo: String, font: List<String>, upper: Boolean,
+    ): Map<String, Any> = mapOf(
+        "id" to id, "type" to "symbol", "source" to "omt", "source-layer" to "place", "minzoom" to minzoom,
+        "filter" to filter,
+        "layout" to mapOf(
+            "text-field" to name,
+            "text-font" to font,
+            "text-size" to listOf("interpolate", listOf("linear"), listOf("zoom"), minzoom, minSize, minzoom + 8, maxSize),
+            "text-transform" to if (upper) "uppercase" else "none",
+            "text-letter-spacing" to if (upper) 0.12 else 0.02,
+            "text-max-width" to 8,
+        ),
+        "paint" to mapOf("text-color" to color, "text-halo-color" to halo, "text-halo-width" to 1.5),
+    )
+
+    private fun trafficLayer(p: MapPalette, original: Boolean): Map<String, Any> {
+        if (original) {
+            return mapOf("id" to "traffic", "type" to "raster", "source" to "traffic", "paint" to mapOf("raster-opacity" to 0.9))
+        }
+        // traffic_level: current speed relative to free flow (0 = standing, 1 = free).
+        val level = listOf("get", "traffic_level")
+        val colorStops = mutableListOf<Any>("interpolate", listOf("linear"), level, 0.0, p.trafficStop, 0.35, p.trafficHeavy, 0.65, p.trafficSlow)
+        colorStops.add(0.85)
+        colorStops.add(p.trafficFree ?: p.trafficSlow)
+        val paint = linkedMapOf<String, Any>(
+            "line-color" to colorStops,
+            "line-width" to zoomExp(6, 1.5, 10, 2.5, 14, 4.5, 18, 9),
+            "line-opacity" to 0.95,
+        )
+        if (p.trafficDots) paint["line-dasharray"] = listOf(0.01, 2.0)
+        val layer = linkedMapOf<String, Any>(
+            "id" to "traffic", "type" to "line", "source" to "traffic", "source-layer" to "Traffic flow",
+            "layout" to mapOf("line-cap" to "round", "line-join" to "round"),
+            "paint" to paint,
+        )
+        // Minimal designs only show congestion; the colourful one shows free flow in green too.
+        if (p.trafficFree == null) layer["filter"] = listOf("<", level, 0.85)
+        return layer
+    }
+}

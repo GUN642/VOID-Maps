@@ -166,33 +166,54 @@ object SpeedCameras {
     /** [mobile] = only mobile controls, otherwise only fixed cameras (separate requests: the answer is capped). */
     fun blitzerDe(box: BBox, mobile: Boolean): List<Hazard> {
         val types = if (mobile) MOBILE else FIXED
+        val out = LinkedHashMap<String, Hazard>()
+        query(box, types, depth = 0, out = out)
+        return out.values.toList()
+    }
+
+    /**
+     * One request; clusters (several cameras merged into one point for large areas) are resolved by
+     * asking again for a small box around them, like the Blitzer.de map does when zooming in.
+     */
+    private fun query(box: BBox, types: List<String>, depth: Int, out: MutableMap<String, Hazard>) {
         val url = "https://www.blitzer.de/karte/api/markers?type=${types.joinToString(",")}" +
             "&box=${box.minLat},${box.minLon},${box.maxLat},${box.maxLon}&z=18"
-        val pois = JSONObject(Http.get(url, timeoutMs = 12_000)).optJSONArray("pois") ?: return emptyList() // null when empty
-        val out = ArrayList<Hazard>()
+        val pois = JSONObject(Http.get(url, timeoutMs = 12_000)).optJSONArray("pois") ?: return // null when empty
+        var clusters = 0
         for (i in 0 until pois.length()) {
-            val p = pois.getJSONObject(i)
+            val p = pois.optJSONObject(i) ?: continue
             val type = p.optString("type")
-            if (type == "cluster" || (type.toIntOrNull() ?: 0) >= 1000) continue
             val lat = p.optString("lat").toDoubleOrNull() ?: continue
             val lng = p.optString("lng").toDoubleOrNull() ?: continue
-            val isMobile = type in MOBILE
+            if (type == "cluster" || (type.toIntOrNull() ?: 0) >= 1000) {
+                if (depth < 2 && clusters < 12) {
+                    clusters++
+                    val sizeM = maxOf(600.0, (box.maxLat - box.minLat) * 111_320.0 / 10)
+                    runCatching { query(BBox.around(GeoPoint(lat, lng), sizeM), types, depth + 1, out) }
+                }
+                continue
+            }
+            // How it is installed comes from info.fixed / info.partly_fixed, not from the type code.
+            val info = p.optJSONObject("info")
+            val fixed = info?.optString("fixed") == "1"
+            val trailer = info?.optString("partly_fixed") == "1" || type == "ts"
+            val isMobile = !fixed && (type in MOBILE)
             val vmax = p.optString("vmax").toIntOrNull()?.takeIf { it > 0 }
             val street = p.optJSONObject("address")?.optString("street").orEmpty()
             val label = LABELS[type] ?: "Blitzer"
-            out += Hazard(
-                id = "bz:" + p.optString("backend").ifBlank { "$lat,$lng" },
+            val id = "bz:" + p.optString("backend").ifBlank { "$lat,$lng" }
+            out[id] = Hazard(
+                id = id,
                 type = if (isMobile) HazardType.MOBILE_CAMERA else HazardType.SPEED_CAMERA,
                 point = GeoPoint(lat, lng),
                 bearing = null,
                 description = listOfNotNull(
-                    (if (isMobile) "Mobil: " else "") + label + (vmax?.let { " · $it km/h" } ?: ""),
+                    (if (trailer) "Anhänger: " else if (isMobile) "Mobil: " else "") + label + (vmax?.let { " · $it km/h" } ?: ""),
                     street.takeIf { it.isNotBlank() },
                     "Quelle: Blitzer.de",
                 ).joinToString("\n"),
                 maxSpeed = vmax,
             )
         }
-        return out
     }
 }

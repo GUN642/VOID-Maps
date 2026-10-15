@@ -413,6 +413,37 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         following = true
     }
 
+    /** Demo drive on the built-in route Stuttgart → Heilbronn. */
+    fun startDemo() {
+        showSettings = false
+        toast("Demo-Route wird berechnet …")
+        viewModelScope.launch {
+            app.voidmaps.nav.DemoDrive.startDefault(getApplication())
+                .onSuccess {
+                    destination = app.voidmaps.nav.DemoDrive.DEMO_DEST
+                    mode = Mode.NAVIGATE
+                    following = true
+                }
+                .onFailure { toast("Demo nicht möglich: ${it.message}") }
+        }
+    }
+
+    /** Demo drive along the route selected in the preview. */
+    fun startDemoForPreview() {
+        val dest = destination ?: return
+        val route = preview ?: return
+        autoStartAt = 0
+        app.voidmaps.nav.DemoDrive.start(getApplication(), dest, stops, route)
+        mode = Mode.NAVIGATE
+        following = true
+    }
+
+    /** Settings button: one request to Blitzer.de around the position or map centre. */
+    fun testBlitzerDe() {
+        val c = myPosition() ?: lastView?.second ?: return toast("Kein Standort")
+        viewModelScope.launch { toast(HazardRepo.testBlitzerDe(c)) }
+    }
+
     fun stopNavigation() {
         Navigator.stop()
         destination = null

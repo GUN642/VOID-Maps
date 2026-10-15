@@ -102,6 +102,26 @@ class Route(
     fun similarTo(other: Route): Boolean =
         kotlin.math.abs(distance - other.distance) < 300 && kotlin.math.abs(duration - other.duration) < 60
 
+    val totalTime: Double get() = cumulativeTime.lastOrNull() ?: 0.0
+
+    /** Metres along the route after [seconds] of driving (used by the demo drive). */
+    fun alongAtTime(seconds: Double): Double {
+        val ct = cumulativeTime
+        val cum = line.cumulative
+        if (ct.size < 2) return 0.0
+        if (seconds <= ct[0]) return 0.0
+        if (seconds >= ct.last()) return cum.last()
+        var lo = 0
+        var hi = ct.size - 1
+        while (hi - lo > 1) {
+            val mid = (lo + hi) / 2
+            if (ct[mid] <= seconds) lo = mid else hi = mid
+        }
+        val span = ct[hi] - ct[lo]
+        val f = if (span <= 0) 1.0 else (seconds - ct[lo]) / span
+        return cum[lo] + (cum[hi] - cum[lo]) * f
+    }
+
     /** Seconds still to drive when [along] metres of the route are done. */
     fun remainingTime(along: Double): Double {
         val cum = line.cumulative

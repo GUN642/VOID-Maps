@@ -178,6 +178,8 @@ fun SettingsScreen(vm: MainViewModel, s: AppSettings, onBack: () -> Unit) {
                 Toggle("Blitzer.de-Daten", "Zusätzliche feste Blitzer aus der Blitzer.de-Karte (inoffizielle Schnittstelle)", s.blitzerDe) { v -> vm.setBlitzerDe(v) }
                 if (s.blitzerDe) {
                     Toggle("Mobile Blitzer", "Gemeldete mobile Kontrollen und Blitzeranhänger, alle 10 Minuten aktualisiert", s.mobileCameras) { v -> vm.setMobileCameras(v) }
+                    Pill("Blitzer.de jetzt testen", selected = false, onClick = { vm.testBlitzerDe() })
+                    Spacer(Modifier.height(6.dp))
                     val bz by app.voidmaps.nav.HazardRepo.bzStatus.collectAsState()
                     if (bz.isNotBlank()) Label(bz, color = if (bz.startsWith("Blitzer.de OK")) c.textMuted else c.warn)
                 }
@@ -187,6 +189,15 @@ fun SettingsScreen(vm: MainViewModel, s: AppSettings, onBack: () -> Unit) {
                     "(75 € und ein Punkt). Ist der Schalter aus, werden keine Blitzerdaten geladen, angezeigt oder angesagt.",
                 color = c.textMuted, style = MaterialTheme.typography.bodyMedium,
             )
+
+            Group("Demo")
+            Text(
+                "Simulierte Fahrt Stuttgart → Heilbronn (Stadt, Landstraße, A81) mit Ansagen, Spuren, Warnungen und Android Auto. " +
+                    "Der echte Standort wird dabei ignoriert. Eine eigene Route lässt sich in der Routenvorschau mit „Demo“ abfahren.",
+                color = c.textMuted, style = MaterialTheme.typography.bodyMedium,
+            )
+            Spacer(Modifier.height(10.dp))
+            Pill("Demo-Fahrt starten", selected = true, onClick = { vm.startDemo() }, filledColor = c.accent)
 
             Group("Updates")
             UpdateSection(vm, s)

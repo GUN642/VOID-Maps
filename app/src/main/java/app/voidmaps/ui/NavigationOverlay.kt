@@ -40,6 +40,7 @@ import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.runtime.getValue
@@ -151,6 +152,7 @@ fun NavigationOverlay(vm: MainViewModel, settings: AppSettings, s: NavState, onT
                 }
             }
             Spacer(Modifier.height(10.dp))
+            DemoBar()
             val nextStop = s.stops.firstOrNull()
             if (nextStop != null && s.nextStopDistance != null && !s.arrived) {
                 StopBar(nextStop.name, s.nextStopDistance, s.nextStopTime ?: 0.0, s.stops.size) { Navigator.removeStop(nextStop) }
@@ -193,6 +195,7 @@ private fun NavigationOverlayLandscape(vm: MainViewModel, settings: AppSettings,
             }
             s.warning?.let { w -> WarningBanner(w.hazard.type, w.hazard.description, w.distance) }
             Spacer(Modifier.weight(1f))
+            DemoBar()
             val nextStop = s.stops.firstOrNull()
             if (nextStop != null && s.nextStopDistance != null && !s.arrived) {
                 StopBar(nextStop.name, s.nextStopDistance, s.nextStopTime ?: 0.0, s.stops.size) { Navigator.removeStop(nextStop) }
@@ -528,6 +531,28 @@ private fun LaneStrip(section: LaneSection) {
                     ManeuverIcon(laneKind(d), if (active) Color.White else Color.White.copy(alpha = 0.3f), Modifier.size(34.dp))
                 }
             }
+        }
+    }
+}
+
+/** Controls of the demo drive: speed and pause. Only visible while a demo runs. */
+@Composable
+private fun DemoBar() {
+    val active by app.voidmaps.nav.DemoDrive.active.collectAsState()
+    if (!active) return
+    val c = VoidTheme.colors
+    val speed by app.voidmaps.nav.DemoDrive.speed.collectAsState()
+    val paused by app.voidmaps.nav.DemoDrive.paused.collectAsState()
+    MapCard(Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
+        Row(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(8.dp).clip(CircleShape).background(c.accent))
+            Spacer(Modifier.width(8.dp))
+            Text("DEMO", style = headingStyle(18), color = c.text, modifier = Modifier.weight(1f))
+            Pill("×$speed", selected = false, onClick = { app.voidmaps.nav.DemoDrive.cycleSpeed() })
+            Spacer(Modifier.width(8.dp))
+            Pill(if (paused) "Weiter" else "Pause", selected = paused, onClick = {
+                app.voidmaps.nav.DemoDrive.paused.value = !paused
+            }, filledColor = c.accent)
         }
     }
 }

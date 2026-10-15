@@ -509,7 +509,11 @@ private fun PreviewOverlay(vm: MainViewModel, settings: AppSettings, onTop: (Int
                             if (i < vm.routes.size - 1) Spacer(Modifier.height(8.dp))
                         }
                         Spacer(Modifier.height(14.dp))
-                        StartButton(vm)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(Modifier.weight(1f)) { StartButton(vm) }
+                            Spacer(Modifier.width(8.dp))
+                            Pill("Demo", selected = false, onClick = { vm.startDemoForPreview() })
+                        }
                     }
                 }
             }

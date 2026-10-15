@@ -95,7 +95,16 @@ object LocationTracker {
         running = false
     }
 
+    /** While the demo drive runs, real GPS fixes are ignored and the simulated ones are used. */
+    @Volatile
+    var simulating = false
+
+    fun pushSimulated(loc: Location) {
+        if (simulating) _location.value = loc
+    }
+
     private fun onLocation(loc: Location) {
+        if (simulating) return
         val now = System.currentTimeMillis()
         if (loc.provider == LocationManager.GPS_PROVIDER) {
             lastGpsAt = now

@@ -113,7 +113,7 @@ object HazardRepo {
     suspend fun ensureMobile(areas: List<BBox>) = mobileMutex.withLock {
         val now = System.currentTimeMillis()
         mobileAreas.removeAll { now - it.second > 10 * 60_000L }
-        for (area in areas.take(8)) {
+        for (area in areas.take(10)) {
             val center = GeoPoint((area.minLat + area.maxLat) / 2, (area.minLon + area.maxLon) / 2)
             if (mobileAreas.any { (b, _) -> b.contains(center) && b.expand(-5_000.0).contains(GeoPoint(area.minLat, area.minLon)) }) continue
             val result = withContext(Dispatchers.IO) { runCatching { SpeedCameras.blitzerDe(area, mobile = true) } }
@@ -131,10 +131,23 @@ object HazardRepo {
         }
     }
 
+    /** Settings button: asks Blitzer.de once around [center] and reports the result. */
+    suspend fun testBlitzerDe(center: GeoPoint): String {
+        val r = withContext(Dispatchers.IO) { runCatching { SpeedCameras.blitzerDe(BBox.around(center, 15_000.0), mobile = true) } }
+        return r.fold(
+            onSuccess = { list ->
+                val kept = _cameras.value.filterNot { it.type == app.voidmaps.data.HazardType.MOBILE_CAMERA && Geo.distance(it.point, center) < 15_000 }
+                _cameras.value = dedupe(kept + list)
+                "Blitzer.de antwortet: ${list.count { it.type == app.voidmaps.data.HazardType.MOBILE_CAMERA }} mobile Kontrollen im Umkreis von 15 km"
+            },
+            onFailure = { "Blitzer.de nicht erreichbar: ${it.message ?: it.javaClass.simpleName}" },
+        ).also { _bzStatus.value = it }
+    }
+
     /** An area for [ensureMobile] around a view or point, at most ~50 × 50 km. */
     fun mobileArea(box: BBox): BBox {
         val c = GeoPoint((box.minLat + box.maxLat) / 2, (box.minLon + box.maxLon) / 2)
-        return if (box.areaKm2 > 2_500) BBox.around(c, 25_000.0) else box.expand(3_000.0)
+        return if (box.areaKm2 > 900) BBox.around(c, 15_000.0) else box.expand(2_000.0)
     }
     private val chargerCells = CellCache(24 * 3_600_000L)
 

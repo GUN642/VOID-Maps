@@ -518,7 +518,7 @@ object Navigator {
                         out += rest[i]
                         if (acc > 100_000) break
                     }
-                    BBox.chunks(out, 2_500.0, 1_000.0, limit = 6)
+                    BBox.chunks(out, 900.0, 1_000.0, limit = 10)
                 }
                 HazardRepo.ensureMobile(ahead)
             }

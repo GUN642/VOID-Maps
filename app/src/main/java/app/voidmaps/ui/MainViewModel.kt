@@ -409,8 +409,20 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val route = preview ?: return
         autoStartAt = 0
         Navigator.start(getApplication(), dest, stops, route)
+        navStartView()
         mode = Mode.NAVIGATE
         following = true
+    }
+
+    /** Every navigation starts with "Route oben" in the tilted 3D view. */
+    private fun navStartView() {
+        val s = settings.value
+        if (s.navView != NavView.HEADING || !s.tilt3d) {
+            update {
+                setNavView(NavView.HEADING)
+                setTilt(true)
+            }
+        }
     }
 
     /** Demo drive on the built-in route Stuttgart → Heilbronn. */
@@ -421,6 +433,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             app.voidmaps.nav.DemoDrive.startDefault(getApplication())
                 .onSuccess {
                     destination = app.voidmaps.nav.DemoDrive.DEMO_DEST
+                    navStartView()
                     mode = Mode.NAVIGATE
                     following = true
                 }
@@ -434,6 +447,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val route = preview ?: return
         autoStartAt = 0
         app.voidmaps.nav.DemoDrive.start(getApplication(), dest, stops, route)
+        navStartView()
         mode = Mode.NAVIGATE
         following = true
     }

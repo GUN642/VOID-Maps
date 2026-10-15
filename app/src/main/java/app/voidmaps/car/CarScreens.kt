@@ -96,6 +96,9 @@ private suspend fun startRoute(ctx: CarContext, place: Place): Boolean {
         return false
     }
     VoidMapsApp.repo.addRecent(place)
+    // Every navigation starts with "Route oben" in the tilted 3D view.
+    VoidMapsApp.repo.setNavView(app.voidmaps.data.NavView.HEADING)
+    VoidMapsApp.repo.setTilt(true)
     Navigator.start(ctx, place, emptyList(), route)
     return true
 }

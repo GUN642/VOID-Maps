@@ -175,19 +175,19 @@ fun MapScreen(vm: MainViewModel, settings: AppSettings, design: Design, hasPermi
         if (!mapReady) return@LaunchedEffect
         while (true) {
             smoother.frame()?.let { controller.updateLocation(it) }
+            smoother.alongOn(controller.activeLine)?.let { controller.setRouteProgress(it) }
             delay(50)
         }
     }
 
     // Routes: all alternatives in the preview, the part still ahead while navigating.
     val routes = vm.routes
-    LaunchedEffect(mapReady, vm.mode, routes, vm.selectedRoute, nav?.routeVersion, nav?.snap?.segment) {
+    LaunchedEffect(mapReady, vm.mode, routes, vm.selectedRoute, nav?.routeVersion) {
         if (!mapReady) return@LaunchedEffect
         val n = nav
-        val snap = n?.snap
         when {
             n != null && (vm.mode == Mode.NAVIGATE || vm.mode == Mode.SEARCH) ->
-                controller.setRoute(if (snap != null) n.route.line.remainder(snap.segment, snap.point) else n.route.points)
+                controller.setActiveRoute(n.route.line, smoother.alongOn(n.route.line) ?: n.snap?.along ?: 0.0)
             vm.mode == Mode.PREVIEW || vm.mode == Mode.SEARCH -> controller.setRoutes(routes.map { it.points }, vm.selectedRoute)
             else -> controller.setRoute(null)
         }

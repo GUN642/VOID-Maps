@@ -46,6 +46,7 @@ class PuckSmoother {
             } else {
                 0.0
             }
+            if (newLine !== line) shownAlong = null
             line = newLine
             latCorrection = 0.0
             lonCorrection = 0.0
@@ -61,6 +62,9 @@ class PuckSmoother {
             }
         }
     }
+
+    /** Distance along [l] shown in the last frame, or null when the puck is not running on that line. */
+    fun alongOn(l: Polyline?): Double? = if (l != null && l === line) shownAlong else null
 
     /** Position to show right now, or null before the first fix. */
     fun frame(): Location? {

@@ -137,7 +137,9 @@ class CarMapRenderer(private val carContext: CarContext, private val lifecycle: 
                     if (loc != null) smoother.onFix(loc, nav)
                     if (nav != null) {
                         val sn = nav.snap
-                        ctrl.setRoute(if (sn != null) nav.route.line.remainder(sn.segment, sn.point) else nav.route.points)
+                        if (ctrl.activeLine !== nav.route.line) {
+                            ctrl.setActiveRoute(nav.route.line, smoother.alongOn(nav.route.line) ?: sn?.along ?: 0.0)
+                        }
                         ctrl.setDestination(nav.destination, nav.stops)
                     } else {
                         ctrl.setRoute(null)
@@ -146,7 +148,11 @@ class CarMapRenderer(private val carContext: CarContext, private val lifecycle: 
                 }
             }
             launch {
+                var wasNavigating = false
                 Navigator.state.collect { st ->
+                    // A new navigation always starts following the position.
+                    if (st != null && !wasNavigating) following = true
+                    wasNavigating = st != null
                     applyFollow()
                     val st2 = VoidMapsApp.settings.value
                     val design = resolveDesign(st2.theme, carContext.isDarkMode)
@@ -165,6 +171,7 @@ class CarMapRenderer(private val carContext: CarContext, private val lifecycle: 
                 // Smooth puck and camera: ~20 position updates per second.
                 while (true) {
                     smoother.frame()?.let { ctrl.updateLocation(it) }
+                    smoother.alongOn(ctrl.activeLine)?.let { ctrl.setRouteProgress(it) }
                     kotlinx.coroutines.delay(50)
                 }
             }

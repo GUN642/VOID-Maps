@@ -148,6 +148,7 @@ object MapStyle {
     const val DEST = "dest"
     const val POIS = "pois"
     const val ROUTE_TRAFFIC = "route-traffic"
+    const val ROUTE_HEAD = "route-head"
     const val SIGNALS = "signals"
     const val LABEL_ANCHOR = "place-village"
 
@@ -179,6 +180,7 @@ object MapStyle {
             DEST to mapOf("type" to "geojson", "data" to EMPTY),
             POIS to mapOf("type" to "geojson", "data" to EMPTY),
             ROUTE_TRAFFIC to mapOf("type" to "geojson", "data" to EMPTY),
+            ROUTE_HEAD to mapOf("type" to "geojson", "data" to EMPTY),
             SIGNALS to mapOf("type" to "geojson", "data" to EMPTY),
         )
         if (c.satellite) {
@@ -366,8 +368,19 @@ object MapStyle {
             "layout" to mapOf("line-cap" to "round", "line-join" to "round"),
             "paint" to mapOf("line-color" to p.routeCasing, "line-width" to zoomExp(5, 5, 12, 9, 16, 16, 18, 28)),
         )
+        // Short piece from the (smoothed) position to the rest of the route, updated ~20 times a second.
+        layers += mapOf(
+            "id" to "route-head-casing", "type" to "line", "source" to ROUTE_HEAD,
+            "layout" to mapOf("line-cap" to "round", "line-join" to "round"),
+            "paint" to mapOf("line-color" to p.routeCasing, "line-width" to zoomExp(5, 5, 12, 9, 16, 16, 18, 28)),
+        )
         layers += mapOf(
             "id" to "route-line", "type" to "line", "source" to ROUTE, "filter" to sel,
+            "layout" to mapOf("line-cap" to "round", "line-join" to "round"),
+            "paint" to mapOf("line-color" to p.route, "line-width" to zoomExp(5, 3, 12, 6, 16, 11, 18, 20)),
+        )
+        layers += mapOf(
+            "id" to "route-head-line", "type" to "line", "source" to ROUTE_HEAD,
             "layout" to mapOf("line-cap" to "round", "line-join" to "round"),
             "paint" to mapOf("line-color" to p.route, "line-width" to zoomExp(5, 3, 12, 6, 16, 11, 18, 20)),
         )

@@ -11,6 +11,7 @@ import app.voidmaps.data.Hazard
 import app.voidmaps.data.HazardType
 import app.voidmaps.data.Place
 import app.voidmaps.data.Poi
+import app.voidmaps.data.Polyline
 import app.voidmaps.nav.LocationTracker
 import org.json.JSONArray
 import org.json.JSONObject
@@ -21,6 +22,7 @@ import org.maplibre.android.geometry.LatLngBounds
 import org.maplibre.android.location.LocationComponentActivationOptions
 import org.maplibre.android.location.LocationComponentOptions
 import org.maplibre.android.location.OnCameraTrackingChangedListener
+import org.maplibre.android.location.OnLocationCameraTransitionListener
 import org.maplibre.android.location.modes.CameraMode
 import org.maplibre.android.location.modes.RenderMode
 import org.maplibre.android.maps.MapLibreMap
@@ -234,28 +236,82 @@ class MapController(private val context: Context) {
         if (changed) applyFollow()
     }
 
+    /** Bumped on every camera change, so late animation callbacks do not undo a newer choice. */
+    private var followGen = 0
+
     private fun applyFollow() {
         val m = map ?: return
         if (style == null) return
         val lc = m.locationComponent
         if (!lc.isLocationComponentActivated) return
+        val gen = ++followGen
         runCatching {
             when (follow) {
                 Follow.NONE -> lc.cameraMode = CameraMode.NONE
-                Follow.BROWSE -> {
-                    lc.cameraMode = if (headingUp) CameraMode.TRACKING_GPS else CameraMode.TRACKING_GPS_NORTH
-                    lc.paddingWhileTracking(doubleArrayOf(leftPadding, 0.0, 0.0, 0.0), 600)
-                    lc.tiltWhileTracking(0.0, 600)
-                    if (m.cameraPosition.zoom < 13) lc.zoomWhileTracking(15.5, 800)
-                }
-                Follow.NAVIGATE -> {
-                    lc.cameraMode = if (headingUp) CameraMode.TRACKING_GPS else CameraMode.TRACKING_GPS_NORTH
-                    lc.paddingWhileTracking(doubleArrayOf(leftPadding, topPadding, 0.0, 0.0), 600)
-                    lc.zoomWhileTracking(navZoom(), 800)
-                    lc.tiltWhileTracking(if (tilt && headingUp) 58.0 else 0.0, 800)
-                }
+                Follow.BROWSE -> track(
+                    m, gen,
+                    if (headingUp) CameraMode.TRACKING_GPS else CameraMode.TRACKING_GPS_NORTH,
+                    zoom = if (m.cameraPosition.zoom < 13) 15.5 else null,
+                    tilt = 0.0,
+                    padding = doubleArrayOf(leftPadding, 0.0, 0.0, 0.0),
+                )
+                Follow.NAVIGATE -> track(
+                    m, gen,
+                    if (headingUp) CameraMode.TRACKING_GPS else CameraMode.TRACKING_GPS_NORTH,
+                    zoom = navZoom(),
+                    tilt = if (tilt && headingUp) NAV_TILT else 0.0,
+                    padding = doubleArrayOf(leftPadding, topPadding, 0.0, 0.0),
+                )
             }
         }
+    }
+
+    /**
+     * Starts following the position with the given zoom, tilt and padding.
+     *
+     * MapLibre ignores zoom/tilt/padding changes while a tracking transition is running, which left
+     * the navigation start far zoomed out and flat. So from a free camera we first fly to the
+     * position with everything set in one animation and only then switch tracking on; when already
+     * tracking, the values are applied after the (possibly instant) mode transition.
+     */
+    private fun track(m: MapLibreMap, gen: Int, mode: Int, zoom: Double?, tilt: Double, padding: DoubleArray) {
+        val lc = m.locationComponent
+        val adjust = object : OnLocationCameraTransitionListener {
+            override fun onLocationCameraTransitionFinished(cameraMode: Int) {
+                if (gen != followGen) return
+                runCatching {
+                    lc.paddingWhileTracking(padding, 500)
+                    zoom?.let { lc.zoomWhileTracking(it, 500) }
+                    lc.tiltWhileTracking(tilt, 500)
+                }
+            }
+            override fun onLocationCameraTransitionCanceled(cameraMode: Int) {}
+        }
+        val loc = lastLocation ?: lc.lastKnownLocation
+        if (lc.cameraMode != CameraMode.NONE || loc == null) {
+            lc.setCameraMode(mode, 600L, zoom, null, tilt, adjust)
+            return
+        }
+        val cam = m.cameraPosition
+        val bearing = when {
+            mode == CameraMode.TRACKING_GPS_NORTH -> 0.0
+            loc.hasBearing() -> loc.bearing.toDouble()
+            else -> cam.bearing
+        }
+        val target = CameraPosition.Builder()
+            .target(LatLng(loc.latitude, loc.longitude))
+            .zoom(zoom ?: cam.zoom)
+            .bearing(bearing)
+            .tilt(tilt)
+            .padding(padding)
+            .build()
+        val engage = {
+            if (gen == followGen) runCatching { lc.setCameraMode(mode, 300L, zoom, null, tilt, adjust) }
+        }
+        m.animateCamera(CameraUpdateFactory.newCameraPosition(target), 900, object : MapLibreMap.CancelableCallback {
+            override fun onFinish() { engage() }
+            override fun onCancel() { engage() }
+        })
     }
 
     /** Shows the whole route between the given screen paddings (pixels). */
@@ -263,6 +319,7 @@ class MapController(private val context: Context) {
         val m = map ?: return
         if (points.size < 2) return
         follow = Follow.NONE
+        followGen++
         runCatching { if (m.locationComponent.isLocationComponentActivated) m.locationComponent.cameraMode = CameraMode.NONE }
         val step = (points.size / 400).coerceAtLeast(1)
         val b = LatLngBounds.Builder()
@@ -276,6 +333,7 @@ class MapController(private val context: Context) {
     fun moveTo(p: GeoPoint, zoom: Double) {
         val m = map ?: return
         follow = Follow.NONE
+        followGen++
         runCatching { if (m.locationComponent.isLocationComponentActivated) m.locationComponent.cameraMode = CameraMode.NONE }
         m.animateCamera(CameraUpdateFactory.newCameraPosition(CameraPosition.Builder().target(LatLng(p.lat, p.lon)).zoom(zoom).tilt(0.0).build()), 800)
     }
@@ -290,8 +348,63 @@ class MapController(private val context: Context) {
 
     fun setRoute(points: List<GeoPoint>?) = setRoutes(if (points == null) emptyList() else listOf(points), 0)
 
+    /** Route being driven; its passed part is cut off at the puck by [setRouteProgress]. */
+    var activeLine: Polyline? = null
+        private set
+    private var restStart = -1
+    private var headJson: String = EMPTY
+
+    /** Shows the route being driven from [along] metres on. */
+    fun setActiveRoute(line: Polyline, along: Double) {
+        if (line !== activeLine) {
+            activeLine = line
+            restStart = -1
+        }
+        setRouteProgress(along)
+    }
+
+    /**
+     * Lets the active route start exactly at the puck. The long rest of the line is only replaced
+     * every few vertices; the short piece up to it is redrawn with every frame.
+     */
+    fun setRouteProgress(along: Double) {
+        val l = activeLine ?: return
+        val pts = l.points
+        if (pts.size < 2) return
+        val a = along.coerceIn(0.0, l.length)
+        val cum = l.cumulative
+        // First vertex ahead of the position.
+        var lo = 0
+        var hi = pts.size - 1
+        while (lo < hi) {
+            val mid = (lo + hi) / 2
+            if (cum[mid] > a) hi = mid else lo = mid + 1
+        }
+        val next = lo
+        if (restStart < next || restStart - next > 40) {
+            restStart = (next + 12).coerceAtMost(pts.size - 1)
+            routeJson = if (pts.size - restStart >= 2) {
+                featureCollection(listOf(lineFeature(pts.subList(restStart, pts.size), JSONObject().put("sel", 1).put("idx", 0))))
+            } else {
+                EMPTY
+            }
+            push(MapStyle.ROUTE, routeJson)
+        }
+        val head = ArrayList<GeoPoint>(restStart - next + 2)
+        head += l.pointAt(a)
+        for (i in next..restStart) head += pts[i]
+        headJson = featureCollection(listOf(lineFeature(head, JSONObject())))
+        push(MapStyle.ROUTE_HEAD, headJson)
+    }
+
     /** Draws several routes; [selected] in the route colour, the others as grey alternatives. */
     fun setRoutes(routes: List<List<GeoPoint>>, selected: Int) {
+        if (activeLine != null || headJson != EMPTY) {
+            activeLine = null
+            restStart = -1
+            headJson = EMPTY
+            push(MapStyle.ROUTE_HEAD, headJson)
+        }
         val features = routes.mapIndexedNotNull { i, pts ->
             if (pts.size < 2) null else lineFeature(pts, JSONObject().put("sel", if (i == selected) 1 else 0).put("idx", i))
         }.sortedBy { it.getJSONObject("properties").getInt("sel") }
@@ -349,6 +462,7 @@ class MapController(private val context: Context) {
     fun scrollBy(dx: Float, dy: Float) {
         val m = map ?: return
         follow = Follow.NONE
+        followGen++
         runCatching { if (m.locationComponent.isLocationComponentActivated) m.locationComponent.cameraMode = CameraMode.NONE }
         m.scrollBy(-dx, -dy, 0)
     }
@@ -382,6 +496,7 @@ class MapController(private val context: Context) {
         push(MapStyle.POIS, poiJson)
         push(MapStyle.SIGNALS, signalJson)
         push(MapStyle.ROUTE_TRAFFIC, routeTrafficJson)
+        push(MapStyle.ROUTE_HEAD, headJson)
     }
 
     private fun push(source: String, json: String) {
@@ -407,6 +522,7 @@ class MapController(private val context: Context) {
     }
 
     companion object {
+        private const val NAV_TILT = 60.0
         private const val EMPTY = """{"type":"FeatureCollection","features":[]}"""
     }
 }

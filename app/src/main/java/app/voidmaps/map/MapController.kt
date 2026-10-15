@@ -168,6 +168,7 @@ class MapController(private val context: Context) {
             )
             lc.isLocationComponentEnabled = true
             lc.renderMode = RenderMode.GPS
+            lc.setMaxAnimationFps(60)
             lc.addOnCameraTrackingChangedListener(object : OnCameraTrackingChangedListener {
                 override fun onCameraTrackingDismissed() = onTrackingDismissed()
                 override fun onCameraTrackingChanged(currentMode: Int) {}
@@ -186,7 +187,33 @@ class MapController(private val context: Context) {
         }
     }
 
+    private var speedBand = 0
+
+    /** Closer in town, a bit further out at motorway speed; closer still in the tilted 3D view. */
+    private fun navZoom(): Double {
+        val base = when (speedBand) {
+            2 -> 16.2
+            1 -> 16.9
+            else -> 17.6
+        }
+        return if (tilt && headingUp) base + 0.3 else base - 0.4
+    }
+
     fun updateLocation(loc: Location) {
+        // Speed bands with a little hysteresis, so the zoom does not pump.
+        val kmh = loc.speed * 3.6f
+        val band = when {
+            kmh > 105 || (speedBand == 2 && kmh > 90) -> 2
+            kmh > 65 || (speedBand >= 1 && kmh > 52) -> 1
+            else -> 0
+        }
+        if (band != speedBand) {
+            speedBand = band
+            val m = map
+            if (follow == Follow.NAVIGATE && m != null && m.locationComponent.isLocationComponentActivated) {
+                runCatching { m.locationComponent.zoomWhileTracking(navZoom(), 1500) }
+            }
+        }
         lastLocation = loc
         val m = map ?: return
         if (style == null) return
@@ -224,8 +251,8 @@ class MapController(private val context: Context) {
                 Follow.NAVIGATE -> {
                     lc.cameraMode = if (headingUp) CameraMode.TRACKING_GPS else CameraMode.TRACKING_GPS_NORTH
                     lc.paddingWhileTracking(doubleArrayOf(leftPadding, topPadding, 0.0, 0.0), 600)
-                    lc.zoomWhileTracking(16.5, 800)
-                    lc.tiltWhileTracking(if (tilt && headingUp) 55.0 else 0.0, 800)
+                    lc.zoomWhileTracking(navZoom(), 800)
+                    lc.tiltWhileTracking(if (tilt && headingUp) 58.0 else 0.0, 800)
                 }
             }
         }

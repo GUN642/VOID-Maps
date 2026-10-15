@@ -126,7 +126,18 @@ class CarNavScreen(carContext: CarContext, private val renderer: CarMapRenderer)
                 }
         }
         lifecycleScope.launch {
-            VoidMapsApp.settings.map { it.voiceMode }.distinctUntilChanged().collect { invalidate() }
+            VoidMapsApp.settings.map { it.voiceMode to it.navView }.distinctUntilChanged().collect { invalidate() }
+        }
+        renderer.onFollowingChanged = { invalidate() }
+    }
+
+    /** Icon of the view button: recentre after panning, otherwise the current orientation. */
+    private fun viewIcon(): Int = when {
+        !renderer.following -> R.drawable.ic_car_center
+        else -> when (VoidMapsApp.settings.value.navView) {
+            app.voidmaps.data.NavView.HEADING -> R.drawable.ic_car_view_heading
+            app.voidmaps.data.NavView.NORTH -> R.drawable.ic_car_view_north
+            app.voidmaps.data.NavView.OVERVIEW -> R.drawable.ic_car_view_overview
         }
     }
 
@@ -170,9 +181,9 @@ class CarNavScreen(carContext: CarContext, private val renderer: CarMapRenderer)
         builder.setMapActionStrip(
             ActionStrip.Builder()
                 .addAction(Action.PAN)
+                .addAction(Action.Builder().setIcon(icon(carContext, viewIcon())).setOnClickListener { renderer.cycleView() }.build())
                 .addAction(Action.Builder().setIcon(icon(carContext, R.drawable.ic_car_plus)).setOnClickListener { renderer.zoomIn() }.build())
                 .addAction(Action.Builder().setIcon(icon(carContext, R.drawable.ic_car_minus)).setOnClickListener { renderer.zoomOut() }.build())
-                .addAction(Action.Builder().setIcon(icon(carContext, R.drawable.ic_car_center)).setOnClickListener { renderer.recenter() }.build())
                 .build(),
         )
         if (s != null) {

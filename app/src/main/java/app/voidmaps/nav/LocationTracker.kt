@@ -71,7 +71,7 @@ object LocationTracker {
         val providers = lm.allProviders
         runCatching {
             if (LocationManager.GPS_PROVIDER in providers) {
-                lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000L, 0f, listener, Looper.getMainLooper())
+                lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 500L, 0f, listener, Looper.getMainLooper())
             }
         }
         val secondary = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && LocationManager.FUSED_PROVIDER in providers) {

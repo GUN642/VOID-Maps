@@ -165,21 +165,18 @@ fun MapScreen(vm: MainViewModel, settings: AppSettings, design: Design, hasPermi
     val location by LocationTracker.location.collectAsState()
     val nav by Navigator.state.collectAsState()
 
-    // Position puck: during navigation snapped onto the route so it does not wobble beside the road.
-    LaunchedEffect(location, nav?.snap, mapReady) {
+    // Position puck: GPS fixes are smoothed to ~20 updates per second (along the route while navigating).
+    val smoother = remember { app.voidmaps.nav.PuckSmoother() }
+    LaunchedEffect(location, nav?.snap) {
         val loc = location ?: return@LaunchedEffect
-        val n = nav
-        val snap = n?.snap
-        val shown = if (n != null && snap != null && !n.offRoute && snap.offset < 30) {
-            Location(loc).apply {
-                latitude = snap.point.lat
-                longitude = snap.point.lon
-                if (loc.speed > 1.5f) bearing = n.route.line.segmentBearing(snap.segment).toFloat()
-            }
-        } else {
-            loc
+        smoother.onFix(loc, nav)
+    }
+    LaunchedEffect(mapReady) {
+        if (!mapReady) return@LaunchedEffect
+        while (true) {
+            smoother.frame()?.let { controller.updateLocation(it) }
+            delay(50)
         }
-        controller.updateLocation(shown)
     }
 
     // Routes: all alternatives in the preview, the part still ahead while navigating.

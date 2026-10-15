@@ -43,7 +43,20 @@ class CarMapRenderer(private val carContext: CarContext, private val lifecycle: 
     private var controller: MapController? = null
     private var stateJob: Job? = null
     private var visibleArea: Rect? = null
-    private var following = true
+    /** False after the driver panned the map; the view button then recentres. */
+    var following = true
+        private set(v) {
+            if (field != v) {
+                field = v
+                onFollowingChanged()
+            }
+        }
+    var onFollowingChanged: () -> Unit = {}
+    private var progress: CarProgressView? = null
+    private var surfaceWidth = 0
+    private var surfaceHeight = 0
+    private var lastOverview = 0L
+    private val smoother = app.voidmaps.nav.PuckSmoother()
 
     init {
         lifecycle.addObserver(this)
@@ -70,7 +83,15 @@ class CarMapRenderer(private val carContext: CarContext, private val lifecycle: 
         display = vd
         val pres = Presentation(carContext, vd.display)
         val mv = MapView(pres.context)
-        pres.setContentView(mv)
+        val bar = CarProgressView(pres.context)
+        val root = android.widget.FrameLayout(pres.context)
+        root.addView(mv, android.widget.FrameLayout.LayoutParams(-1, -1))
+        root.addView(bar, android.widget.FrameLayout.LayoutParams(0, 0))
+        progress = bar
+        surfaceWidth = surfaceContainer.width
+        surfaceHeight = surfaceContainer.height
+        pres.setContentView(root)
+        visibleArea?.let { area -> root.post { onVisibleAreaChanged(area) } }
         pres.show()
         mv.onCreate(null)
         mv.onStart()
@@ -93,7 +114,10 @@ class CarMapRenderer(private val carContext: CarContext, private val lifecycle: 
         }
     }
 
+    private var icons: Map<String, android.graphics.Bitmap>? = null
+
     private fun observe(ctrl: MapController) {
+        val pres = presentation ?: return
         stateJob?.cancel()
         stateJob = lifecycle.coroutineScope.launch {
             launch {
@@ -110,19 +134,7 @@ class CarMapRenderer(private val carContext: CarContext, private val lifecycle: 
             }
             launch {
                 combine(LocationTracker.location, Navigator.state) { l, n -> l to n }.collect { (loc, nav) ->
-                    if (loc != null) {
-                        val snap = nav?.snap
-                        val shown = if (nav != null && snap != null && !nav.offRoute && snap.offset < 30) {
-                            Location(loc).apply {
-                                latitude = snap.point.lat
-                                longitude = snap.point.lon
-                                if (loc.speed > 1.5f) bearing = nav.route.line.segmentBearing(snap.segment).toFloat()
-                            }
-                        } else {
-                            loc
-                        }
-                        ctrl.updateLocation(shown)
-                    }
+                    if (loc != null) smoother.onFix(loc, nav)
                     if (nav != null) {
                         val sn = nav.snap
                         ctrl.setRoute(if (sn != null) nav.route.line.remainder(sn.segment, sn.point) else nav.route.points)
@@ -134,7 +146,27 @@ class CarMapRenderer(private val carContext: CarContext, private val lifecycle: 
                 }
             }
             launch {
-                Navigator.state.collect { applyFollow() }
+                Navigator.state.collect { st ->
+                    applyFollow()
+                    val st2 = VoidMapsApp.settings.value
+                    val design = resolveDesign(st2.theme, carContext.isDarkMode)
+                    val pal = mapPalette(design)
+                    if (icons == null) icons = app.voidmaps.map.MapIcons.all(pres.context, pal)
+                    progress?.update(st, st2.speedCameras, pal, icons.orEmpty())
+                    // Route overview refreshes now and then as the route shrinks.
+                    if (st != null && st2.navView == NavView.OVERVIEW && following &&
+                        System.currentTimeMillis() - lastOverview > 30_000
+                    ) {
+                        showOverview()
+                    }
+                }
+            }
+            launch {
+                // Smooth puck and camera: ~20 position updates per second.
+                while (true) {
+                    smoother.frame()?.let { ctrl.updateLocation(it) }
+                    kotlinx.coroutines.delay(50)
+                }
             }
             launch {
                 combine(HazardRepo.incidents, HazardRepo.cameras, VoidMapsApp.settings) { a, b, s -> a + if (s.speedCameras) b else emptyList() }
@@ -152,14 +184,49 @@ class CarMapRenderer(private val carContext: CarContext, private val lifecycle: 
         // Keep the position in the lower part of the visible area while navigating.
         val top = if (navigating && area != null) (area.top + area.height() * 0.35).toDouble() else if (navigating) height * 0.35 else 0.0
         val headingUp = if (navigating) s.navView != NavView.NORTH else s.headingUp
+        val overview = navigating && s.navView == NavView.OVERVIEW
         ctrl.setFollow(
             when {
-                !following -> Follow.NONE
+                !following || overview -> Follow.NONE
                 navigating -> Follow.NAVIGATE
                 else -> Follow.BROWSE
             },
             headingUp, s.tilt3d, top,
         )
+    }
+
+    private fun showOverview() {
+        val ctrl = controller ?: return
+        val n = Navigator.state.value ?: return
+        val sn = n.snap
+        val pts = if (sn != null) n.route.line.remainder(sn.segment, sn.point) else n.route.points
+        val area = visibleArea ?: android.graphics.Rect(0, 0, surfaceWidth, surfaceHeight)
+        lastOverview = System.currentTimeMillis()
+        ctrl.showOverview(pts, area.left + 60, area.top + 40, (surfaceWidth - area.right) + 100, (surfaceHeight - area.bottom) + 40)
+    }
+
+    /** View button: recentre after panning, otherwise Route oben → Norden oben → Übersicht. */
+    fun cycleView() {
+        if (!following) {
+            recenter()
+            return
+        }
+        val cur = VoidMapsApp.settings.value.navView
+        val next = when (cur) {
+            NavView.HEADING -> NavView.NORTH
+            NavView.NORTH -> NavView.OVERVIEW
+            NavView.OVERVIEW -> NavView.HEADING
+        }
+        lifecycle.coroutineScope.launch {
+            VoidMapsApp.repo.setNavView(next)
+            kotlinx.coroutines.delay(100)
+            if (next == NavView.OVERVIEW && Navigator.state.value != null) {
+                applyFollow()
+                showOverview()
+            } else {
+                recenter()
+            }
+        }
     }
 
     fun recenter() {
@@ -175,6 +242,14 @@ class CarMapRenderer(private val carContext: CarContext, private val lifecycle: 
 
     override fun onVisibleAreaChanged(visibleArea: Rect) {
         this.visibleArea = visibleArea
+        // Progress bar at the right edge of the free map area.
+        progress?.let { bar ->
+            val d = bar.resources.displayMetrics.density
+            val lp = android.widget.FrameLayout.LayoutParams((44 * d).toInt(), (visibleArea.height() - 60 * d).toInt().coerceAtLeast(0))
+            lp.leftMargin = visibleArea.right - (52 * d).toInt()
+            lp.topMargin = visibleArea.top + (30 * d).toInt()
+            bar.layoutParams = lp
+        }
         applyFollow()
     }
 
@@ -196,6 +271,8 @@ class CarMapRenderer(private val carContext: CarContext, private val lifecycle: 
         stateJob = null
         controller?.detach()
         controller = null
+        progress = null
+        icons = null
         mapView?.let {
             runCatching {
                 it.onPause()

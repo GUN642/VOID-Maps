@@ -96,7 +96,46 @@ object HazardRepo {
         fun missing(cells: List<Cell>, now: Long) = cells.filter { (loaded[it] ?: 0L) + ttlMs < now }
     }
 
-    private val cameraCells = CellCache(20 * 60_000L)
+    private val cameraCells = CellCache(6 * 3_600_000L)
+
+    // ------------------------------------------------------------------ mobile cameras (Blitzer.de)
+
+    private val _bzStatus = MutableStateFlow("")
+    /** Last answer of Blitzer.de, shown in the settings. */
+    val bzStatus: StateFlow<String> = _bzStatus.asStateFlow()
+    private val mobileMutex = Mutex()
+    private val mobileAreas = ArrayList<Pair<BBox, Long>>()
+
+    /**
+     * Mobile controls for the given areas (each at most ~50 × 50 km). Fetched one after the other and
+     * at most every 10 minutes per area, because Blitzer.de blocks clients that ask too often.
+     */
+    suspend fun ensureMobile(areas: List<BBox>) = mobileMutex.withLock {
+        val now = System.currentTimeMillis()
+        mobileAreas.removeAll { now - it.second > 10 * 60_000L }
+        for (area in areas.take(8)) {
+            val center = GeoPoint((area.minLat + area.maxLat) / 2, (area.minLon + area.maxLon) / 2)
+            if (mobileAreas.any { (b, _) -> b.contains(center) && b.expand(-5_000.0).contains(GeoPoint(area.minLat, area.minLon)) }) continue
+            val result = withContext(Dispatchers.IO) { runCatching { SpeedCameras.blitzerDe(area, mobile = true) } }
+            result.onSuccess { list ->
+                mobileAreas += area to now
+                val kept = _cameras.value.filterNot { it.type == app.voidmaps.data.HazardType.MOBILE_CAMERA && area.contains(it.point) }
+                _cameras.value = dedupe(kept + list).takeLast(6000)
+                val total = _cameras.value.count { it.type == app.voidmaps.data.HazardType.MOBILE_CAMERA }
+                _bzStatus.value = "Blitzer.de OK · $total mobile Blitzer geladen · " +
+                    java.text.SimpleDateFormat("HH:mm", java.util.Locale.GERMANY).format(java.util.Date())
+            }.onFailure { e ->
+                _bzStatus.value = "Blitzer.de nicht erreichbar: ${e.message ?: e.javaClass.simpleName}"
+            }
+            kotlinx.coroutines.delay(1_500)
+        }
+    }
+
+    /** An area for [ensureMobile] around a view or point, at most ~50 × 50 km. */
+    fun mobileArea(box: BBox): BBox {
+        val c = GeoPoint((box.minLat + box.maxLat) / 2, (box.minLon + box.maxLon) / 2)
+        return if (box.areaKm2 > 2_500) BBox.around(c, 25_000.0) else box.expand(3_000.0)
+    }
     private val chargerCells = CellCache(24 * 3_600_000L)
 
     // ------------------------------------------------------------------ cameras
@@ -109,13 +148,18 @@ object HazardRepo {
         val found = withContext(Dispatchers.IO) {
             coroutineScope {
                 val osm = todo.chunked(8).map { group -> async { runCatching { SpeedCameras.osm(group.map { it.box() }) }.getOrNull() } }
-                val bz = if (blitzerDe) {
-                    todo.map { cell -> async { runCatching { SpeedCameras.blitzerDe(cell.box(), mobile) }.getOrNull() } }
+                // Blitzer.de blocks clients that ask too often: one request after the other.
+                val bzLists = if (blitzerDe) {
+                    todo.map { cell ->
+                        val r = runCatching { SpeedCameras.blitzerDe(cell.box(), mobile = false) }
+                        r.exceptionOrNull()?.let { _bzStatus.value = "Blitzer.de nicht erreichbar: ${it.message}" }
+                        kotlinx.coroutines.delay(700)
+                        r.getOrNull()
+                    }
                 } else {
                     emptyList()
                 }
                 val osmLists = osm.awaitAll()
-                val bzLists = bz.awaitAll()
                 // A cell counts as loaded only when every source answered.
                 todo.forEachIndexed { i, cell ->
                     val osmOk = osmLists.getOrNull(i / 8) != null
@@ -126,8 +170,8 @@ object HazardRepo {
             }
         }
         val boxes = todo.map { it.box() }
-        // Replace what was known in the refreshed cells (mobile cameras come and go).
-        val kept = _cameras.value.filterNot { h -> boxes.any { it.contains(h.point) } }
+        // Replace the fixed cameras of the refreshed cells; mobile ones are handled by ensureMobile.
+        val kept = _cameras.value.filterNot { h -> h.type != app.voidmaps.data.HazardType.MOBILE_CAMERA && boxes.any { it.contains(h.point) } }
         _cameras.value = dedupe(kept + found).takeLast(6000)
     }
 
@@ -143,6 +187,7 @@ object HazardRepo {
     fun clearCameras() {
         _cameras.value = emptyList()
         cameraCells.loaded.clear()
+        mobileAreas.clear()
     }
 
     // ------------------------------------------------------------------ chargers

@@ -508,6 +508,20 @@ object Navigator {
         if (st.speedCameras || st.chargers) {
             val cells = withContext(Dispatchers.Default) { HazardRepo.cellsFor(rest) }
             if (st.speedCameras) HazardRepo.ensureCameras(cells, st.blitzerDe, st.mobileCameras)
+            if (st.speedCameras && st.blitzerDe && st.mobileCameras) {
+                // Mobile controls along the next ~100 km, in areas of about 50 × 50 km.
+                val ahead = withContext(Dispatchers.Default) {
+                    var acc = 0.0
+                    val out = ArrayList<GeoPoint>()
+                    for (i in rest.indices) {
+                        if (i > 0) acc += Geo.distance(rest[i - 1], rest[i])
+                        out += rest[i]
+                        if (acc > 100_000) break
+                    }
+                    BBox.chunks(out, 2_500.0, 1_000.0, limit = 6)
+                }
+                HazardRepo.ensureMobile(ahead)
+            }
             if (st.chargers) HazardRepo.ensureChargers(cells, st.chargerOperators)
         }
     }

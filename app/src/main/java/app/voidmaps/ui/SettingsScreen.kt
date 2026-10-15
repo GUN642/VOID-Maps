@@ -177,7 +177,9 @@ fun SettingsScreen(vm: MainViewModel, s: AppSettings, onBack: () -> Unit) {
             if (s.speedCameras) {
                 Toggle("Blitzer.de-Daten", "Zusätzliche feste Blitzer aus der Blitzer.de-Karte (inoffizielle Schnittstelle)", s.blitzerDe) { v -> vm.setBlitzerDe(v) }
                 if (s.blitzerDe) {
-                    Toggle("Mobile Blitzer", "Gemeldete mobile Kontrollen und Blitzeranhänger, alle 20 Minuten aktualisiert", s.mobileCameras) { v -> vm.setMobileCameras(v) }
+                    Toggle("Mobile Blitzer", "Gemeldete mobile Kontrollen und Blitzeranhänger, alle 10 Minuten aktualisiert", s.mobileCameras) { v -> vm.setMobileCameras(v) }
+                    val bz by app.voidmaps.nav.HazardRepo.bzStatus.collectAsState()
+                    if (bz.isNotBlank()) Label(bz, color = if (bz.startsWith("Blitzer.de OK")) c.textMuted else c.warn)
                 }
             }
             Text(

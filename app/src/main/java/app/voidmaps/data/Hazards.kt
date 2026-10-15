@@ -163,11 +163,12 @@ object SpeedCameras {
      * Blitzer.de (unofficial interface of the public map, private use only). One request per box;
      * the server sends at most ~500 entries, so boxes should stay around 20 × 20 km.
      */
+    /** [mobile] = only mobile controls, otherwise only fixed cameras (separate requests: the answer is capped). */
     fun blitzerDe(box: BBox, mobile: Boolean): List<Hazard> {
-        val types = (if (mobile) MOBILE else emptyList()) + FIXED
+        val types = if (mobile) MOBILE else FIXED
         val url = "https://www.blitzer.de/karte/api/markers?type=${types.joinToString(",")}" +
             "&box=${box.minLat},${box.minLon},${box.maxLat},${box.maxLon}&z=18"
-        val pois = JSONObject(Http.get(url, timeoutMs = 12_000)).optJSONArray("pois") ?: return emptyList()
+        val pois = JSONObject(Http.get(url, timeoutMs = 12_000)).optJSONArray("pois") ?: return emptyList() // null when empty
         val out = ArrayList<Hazard>()
         for (i in 0 until pois.length()) {
             val p = pois.getJSONObject(i)

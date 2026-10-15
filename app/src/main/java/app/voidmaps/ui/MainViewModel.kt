@@ -456,7 +456,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             viewModelScope.launch { HazardRepo.loadIncidentsForView(box, center, s.tomtomKey) }
         }
         if (s.speedCameras) {
-            viewModelScope.launch { HazardRepo.ensureCameras(HazardRepo.cellsFor(box), s.blitzerDe, s.mobileCameras) }
+            viewModelScope.launch {
+                HazardRepo.ensureCameras(HazardRepo.cellsFor(box), s.blitzerDe, s.mobileCameras)
+            }
+            if (s.blitzerDe && s.mobileCameras) {
+                viewModelScope.launch { HazardRepo.ensureMobile(listOf(HazardRepo.mobileArea(box))) }
+            }
         }
         if (s.trafficSignals && zoom >= 14) {
             viewModelScope.launch { HazardRepo.loadSignals(center) }
@@ -487,6 +492,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val route = Navigator.state.value?.route ?: preview
             if (route != null) HazardRepo.ensureCameras(HazardRepo.cellsFor(route.points), s.blitzerDe, s.mobileCameras)
             if (v != null && v.third >= 8.5) HazardRepo.ensureCameras(HazardRepo.cellsFor(v.first), s.blitzerDe, s.mobileCameras)
+            if (v != null && s.blitzerDe && s.mobileCameras) HazardRepo.ensureMobile(listOf(HazardRepo.mobileArea(v.first)))
         }
     }
 

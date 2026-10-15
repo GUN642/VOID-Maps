@@ -62,8 +62,7 @@ object HazardRepo {
         val b = cellOf(GeoPoint(box.maxLat, box.maxLon))
         val out = ArrayList<Cell>()
         for (y in a.y..b.y) for (x in a.x..b.x) out += Cell(x, y)
-        // Too large (zoomed far out): only the cells around the centre.
-        if (out.size <= max) return out
+        // Centre first; when zoomed far out only the cells around the centre.
         val c = cellOf(GeoPoint((box.minLat + box.maxLat) / 2, (box.minLon + box.maxLon) / 2))
         return out.sortedBy { (it.x - c.x) * (it.x - c.x) + (it.y - c.y) * (it.y - c.y) }.take(max)
     }
@@ -127,7 +126,7 @@ object HazardRepo {
             }.onFailure { e ->
                 _bzStatus.value = "Blitzer.de nicht erreichbar: ${e.message ?: e.javaClass.simpleName}"
             }
-            kotlinx.coroutines.delay(1_500)
+            kotlinx.coroutines.delay(600)
         }
     }
 
@@ -156,8 +155,11 @@ object HazardRepo {
     /** Makes sure the speed cameras of [cells] are loaded (OSM always, Blitzer.de when enabled). */
     suspend fun ensureCameras(cells: List<Cell>, blitzerDe: Boolean, mobile: Boolean) = cameraCells.mutex.withLock {
         val now = System.currentTimeMillis()
-        val todo = cameraCells.missing(cells, now)
-        if (todo.isEmpty()) return@withLock
+        // Nearest cells first (callers pass them in that order), shown on the map after every few cells.
+        for (todo in cameraCells.missing(cells, now).chunked(4)) loadCameraCells(todo, now, blitzerDe)
+    }
+
+    private suspend fun loadCameraCells(todo: List<Cell>, now: Long, blitzerDe: Boolean) {
         val found = withContext(Dispatchers.IO) {
             coroutineScope {
                 val osm = todo.chunked(8).map { group -> async { runCatching { SpeedCameras.osm(group.map { it.box() }) }.getOrNull() } }
@@ -166,7 +168,7 @@ object HazardRepo {
                     todo.map { cell ->
                         val r = runCatching { SpeedCameras.blitzerDe(cell.box(), mobile = false) }
                         r.exceptionOrNull()?.let { _bzStatus.value = "Blitzer.de nicht erreichbar: ${it.message}" }
-                        kotlinx.coroutines.delay(700)
+                        kotlinx.coroutines.delay(300)
                         r.getOrNull()
                     }
                 } else {

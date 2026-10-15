@@ -505,23 +505,26 @@ object Navigator {
             val boxes = withContext(Dispatchers.Default) { BBox.chunks(rest, 9_000.0, 500.0, limit = 20) }
             HazardRepo.loadIncidents(st.tomtomKey, boxes, replace = false)
         }
-        if (st.speedCameras || st.chargers) {
-            val cells = withContext(Dispatchers.Default) { HazardRepo.cellsFor(rest) }
-            if (st.speedCameras) HazardRepo.ensureCameras(cells, st.blitzerDe, st.mobileCameras)
-            if (st.speedCameras && st.blitzerDe && st.mobileCameras) {
-                // Mobile controls along the next ~100 km, in areas of about 50 × 50 km.
+        // Mobile controls first and in parallel: they matter most and change often.
+        if (st.speedCameras && st.blitzerDe && st.mobileCameras) {
+            VoidMapsApp.scope.launch {
+                // Mobile controls along the next ~100 km, in areas of about 30 × 30 km, nearest first.
                 val ahead = withContext(Dispatchers.Default) {
                     var acc = 0.0
                     val out = ArrayList<GeoPoint>()
-                    for (i in rest.indices) {
-                        if (i > 0) acc += Geo.distance(rest[i - 1], rest[i])
-                        out += rest[i]
+                    for (k in rest.indices) {
+                        if (k > 0) acc += Geo.distance(rest[k - 1], rest[k])
+                        out += rest[k]
                         if (acc > 100_000) break
                     }
                     BBox.chunks(out, 900.0, 1_000.0, limit = 10)
                 }
                 HazardRepo.ensureMobile(ahead)
             }
+        }
+        if (st.speedCameras || st.chargers) {
+            val cells = withContext(Dispatchers.Default) { HazardRepo.cellsFor(rest) }
+            if (st.speedCameras) HazardRepo.ensureCameras(cells, st.blitzerDe, st.mobileCameras)
             if (st.chargers) HazardRepo.ensureChargers(cells, st.chargerOperators)
         }
     }

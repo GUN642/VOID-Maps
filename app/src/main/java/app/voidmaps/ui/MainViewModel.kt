@@ -27,6 +27,7 @@ import app.voidmaps.data.Route
 import app.voidmaps.data.RouteOptions
 import app.voidmaps.data.Routing
 import app.voidmaps.data.Search
+import app.voidmaps.data.SharedLocation
 import app.voidmaps.data.SettingsRepository
 import app.voidmaps.data.Updater
 import app.voidmaps.data.VoiceMode
@@ -36,6 +37,7 @@ import app.voidmaps.nav.LocationTracker
 import app.voidmaps.nav.Navigator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
@@ -356,15 +358,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val dest = destination ?: return
         routeJob?.cancel()
         autoStartAt = 0
-        val from = myPosition()
-        if (from == null) {
-            routeError = "Kein GPS-Signal – Standort aktivieren und kurz warten"
-            routing = false
-            return
-        }
         routing = true
         routeError = null
         routeJob = viewModelScope.launch {
+            // Right after the app was opened (e.g. from "Teilen") the first GPS fix may still be missing.
+            val from = myPosition() ?: kotlinx.coroutines.withTimeoutOrNull(20_000) {
+                LocationTracker.location.filterNotNull().first()
+            }?.let { GeoPoint(it.latitude, it.longitude) }
+            if (from == null) {
+                routeError = "Kein GPS-Signal – Standort aktivieren und kurz warten"
+                routing = false
+                return@launch
+            }
             val s = settings.value
             val heading = LocationTracker.location.value?.takeIf { it.hasBearing() && it.speed > 2 }?.bearing?.toDouble()
             val points = listOf(from) + stops.map { it.point } + dest.point
@@ -614,13 +619,26 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     // ------------------------------------------------------------------ external intents
 
-    /** geo:52.5,13.4?q=… and google.navigation:q=… links from other apps. */
+    /**
+     * Destinations from other apps: "Teilen" → VOID Maps (text with a maps link, name and address),
+     * maps links opened with VOID Maps, and geo: / google.navigation: links.
+     */
     fun handleIntent(intent: Intent?) {
-        val data: Uri = intent?.data ?: return
+        intent ?: return
+        if (intent.action == Intent.ACTION_SEND) {
+            val text = intent.getStringExtra(Intent.EXTRA_TEXT).orEmpty()
+            val subject = intent.getStringExtra(Intent.EXTRA_SUBJECT).orEmpty()
+            // Some apps put the place name into the subject only.
+            val all = if (subject.isNotBlank() && !text.contains(subject)) "$subject\n$text" else text
+            if (all.isNotBlank()) receiveShared(all)
+            return
+        }
+        val data: Uri = intent.data ?: return
         val raw = data.toString()
         val q = when (data.scheme) {
             "geo" -> data.getQueryParameter("q") ?: raw.removePrefix("geo:").substringBefore('?')
             "google.navigation" -> data.getQueryParameter("q") ?: raw.substringAfter("q=", "")
+            "http", "https" -> return receiveShared(raw)
             else -> return
         }.trim()
         val coords = Regex("""^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)""").find(q)
@@ -628,19 +646,54 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (coords != null) {
             val p = GeoPoint(coords.groupValues[1].toDouble(), coords.groupValues[2].toDouble())
             if (p.lat != 0.0 || p.lon != 0.0) {
-                goTo(Place(label ?: "Ziel", "%.5f, %.5f".format(java.util.Locale.US, p.lat, p.lon), p))
+                receivePlace(Place(label ?: "Ziel", "%.5f, %.5f".format(java.util.Locale.US, p.lat, p.lon), p))
                 return
             }
         }
         if (q.isBlank()) return
-        viewModelScope.launch {
-            val r = withContext(Dispatchers.IO) { runCatching { Search.search(q, myPosition(), settings.value.tomtomKey) }.getOrNull() }
-            val first = r?.firstOrNull()
-            if (first != null) goTo(first) else {
-                mode = Mode.SEARCH
-                onQuery(q)
+        receiveShared(q)
+    }
+
+    private var sharedJob: Job? = null
+
+    /** Shared text or link: find the place (expanding short links if needed), then route to it. */
+    private fun receiveShared(text: String) {
+        sharedJob?.cancel()
+        toast("Geteilter Ort wird gesucht …")
+        sharedJob = viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching { SharedLocation.resolve(text, myPosition(), settings.value.tomtomKey) }.getOrDefault(SharedLocation.Result.None)
+            }
+            when (result) {
+                is SharedLocation.Result.Found -> receivePlace(result.place)
+                is SharedLocation.Result.Search -> {
+                    if (Navigator.isActive()) {
+                        toast("Ort nicht gefunden: ${result.query}")
+                    } else {
+                        showSettings = false
+                        openSearch()
+                        onQuery(result.query)
+                    }
+                }
+                SharedLocation.Result.None -> toast("Im geteilten Text wurde kein Ort gefunden")
             }
         }
+    }
+
+    /** Route preview (with the 5 s auto start), or the "Zwischenziel / neues Ziel" question while navigating. */
+    private fun receivePlace(place: Place) {
+        update { addRecent(place) }
+        showSettings = false
+        if (Navigator.isActive()) {
+            pendingChoice = place
+            return
+        }
+        searchJob?.cancel()
+        pick = Pick.DESTINATION
+        query = ""
+        results = emptyList()
+        category = null
+        goTo(place)
     }
 
     // ------------------------------------------------------------------ updates

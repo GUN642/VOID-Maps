@@ -52,6 +52,35 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:scheme="google.navigation" />
             </intent-filter>
+            <!-- "Teilen" from Google Maps and other apps: text with name, address and a maps link. -->
+            <intent-filter android:label="Mit VOID Maps navigieren">
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+            <!-- Maps links opened with VOID Maps ("Öffnen mit"). -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" />
+                <data android:host="maps.app.goo.gl" />
+                <data android:host="maps.google.com" />
+                <data android:host="maps.google.de" />
+                <data android:host="maps.apple.com" />
+                <data android:host="maps.apple" />
+                <data android:host="www.openstreetmap.org" />
+                <data android:host="osm.org" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" />
+                <data android:host="www.google.com" />
+                <data android:host="www.google.de" />
+                <data android:pathPrefix="/maps" />
+            </intent-filter>
         </activity>
 
         <service

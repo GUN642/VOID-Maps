@@ -221,7 +221,10 @@ object Navigator {
             VoiceMode.WARNINGS -> kind == Say.WARN
             VoiceMode.ALL -> true
         }
-        if (allowed) speaker?.speak(text, interrupt)
+        if (allowed) speaker?.let {
+            it.configure(settings.voiceName, settings.speechRate)
+            it.speak(text, interrupt)
+        }
     }
 
     private fun heading(loc: Location): Double? = if (loc.hasBearing() && loc.speed > 2) loc.bearing.toDouble() else null

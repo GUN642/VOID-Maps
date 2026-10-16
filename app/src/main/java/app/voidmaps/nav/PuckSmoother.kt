@@ -27,6 +27,7 @@ class PuckSmoother {
     private var latCorrection = 0.0
     private var lonCorrection = 0.0
     private var shownPoint: GeoPoint? = null
+    private var lastFrame = 0L
 
     /** Feed every GPS fix together with the current navigation state. */
     fun onFix(loc: Location, nav: NavState?) {
@@ -91,7 +92,10 @@ class PuckSmoother {
             if (moving && f.hasBearing()) targetBearing = f.bearing
         }
         shownPoint = point
-        // Damped rotation: a fraction of the remaining angle per frame.
+        // Damped rotation, independent of the frame rate (20 Hz on the phone, every frame in the car).
+        val frameDt = if (lastFrame == 0L) 0.05 else ((now - lastFrame) / 1000.0).coerceIn(0.0, 0.5)
+        lastFrame = now
+        val k = (1.0 - exp(-frameDt / 0.25)).toFloat()
         val current = shownBearing
         val bearing = when {
             targetBearing == null -> current ?: f.bearing
@@ -100,7 +104,7 @@ class PuckSmoother {
                 var diff = targetBearing - current
                 while (diff > 180) diff -= 360
                 while (diff < -180) diff += 360
-                ((current + diff * 0.18f) + 360f) % 360f
+                ((current + diff * k) + 360f) % 360f
             }
         }
         shownBearing = bearing

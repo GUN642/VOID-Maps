@@ -44,6 +44,10 @@ data class AppSettings(
     val voiceMode: VoiceMode = VoiceMode.ALL,
     /** Compact announcements ("In 300 Metern rechts abbiegen"). On by default. */
     val shortAnnouncements: Boolean = true,
+    /** Text-to-speech voice by name; empty = the engine's default German voice. */
+    val voiceName: String = "",
+    /** Speaking rate (1.0 = normal). */
+    val speechRate: Float = 1.0f,
     val tilt3d: Boolean = true,
     val headingUp: Boolean = true,
     val navView: NavView = NavView.HEADING,
@@ -91,6 +95,8 @@ class SettingsRepository(private val context: Context) {
         val voice = booleanPreferencesKey("voice")
         val voiceMode = stringPreferencesKey("voice_mode")
         val shortAnnouncements = booleanPreferencesKey("short_announcements")
+        val voiceName = stringPreferencesKey("voice_name")
+        val speechRate = stringPreferencesKey("speech_rate")
         val tilt = booleanPreferencesKey("tilt3d")
         val headingUp = booleanPreferencesKey("heading_up")
         val navView = stringPreferencesKey("nav_view")
@@ -132,6 +138,8 @@ class SettingsRepository(private val context: Context) {
             // Older versions stored a plain on/off switch.
             voiceMode = p.enum(K.voiceMode, if (p[K.voice] == false) VoiceMode.OFF else d.voiceMode),
             shortAnnouncements = p[K.shortAnnouncements] ?: d.shortAnnouncements,
+            voiceName = p[K.voiceName] ?: d.voiceName,
+            speechRate = p[K.speechRate]?.toFloatOrNull() ?: d.speechRate,
             tilt3d = p[K.tilt] ?: d.tilt3d,
             headingUp = p[K.headingUp] ?: d.headingUp,
             navView = p.enum(K.navView, d.navView),
@@ -169,6 +177,8 @@ class SettingsRepository(private val context: Context) {
     suspend fun setDotHeadings(v: Boolean) = context.dataStore.edit { it[K.dotHeadings] = v }
     suspend fun setVoiceMode(v: VoiceMode) = context.dataStore.edit { it[K.voiceMode] = v.name }
     suspend fun setShortAnnouncements(v: Boolean) = context.dataStore.edit { it[K.shortAnnouncements] = v }
+    suspend fun setVoiceName(v: String) = context.dataStore.edit { it[K.voiceName] = v }
+    suspend fun setSpeechRate(v: Float) = context.dataStore.edit { it[K.speechRate] = v.toString() }
     suspend fun setTilt(v: Boolean) = context.dataStore.edit { it[K.tilt] = v }
     suspend fun setHeadingUp(v: Boolean) = context.dataStore.edit { it[K.headingUp] = v }
     suspend fun setNavView(v: NavView) = context.dataStore.edit { it[K.navView] = v.name }

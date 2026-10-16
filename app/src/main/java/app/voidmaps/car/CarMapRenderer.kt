@@ -125,7 +125,8 @@ class CarMapRenderer(private val carContext: CarContext, private val lifecycle: 
                     val design = resolveDesign(s.theme, carContext.isDarkMode)
                     val colors = colorsFor(design)
                     ctrl.applyStyle(
-                        styleConfigFor(s, mapPalette(design)),
+                        // Cameras and warnings much larger on the car display.
+                        styleConfigFor(s, mapPalette(design)).copy(cameraScale = 2.2, hazardScale = 1.6),
                         colors.accent.toArgb(),
                         if (colors.isDark) android.graphics.Color.BLACK else android.graphics.Color.WHITE,
                     )
@@ -157,7 +158,7 @@ class CarMapRenderer(private val carContext: CarContext, private val lifecycle: 
                     val st2 = VoidMapsApp.settings.value
                     val design = resolveDesign(st2.theme, carContext.isDarkMode)
                     val pal = mapPalette(design)
-                    if (icons == null) icons = app.voidmaps.map.MapIcons.all(pres.context, pal)
+                    if (icons == null) icons = app.voidmaps.map.MapIcons.all(pres.context, pal, CarProgressView.SCALE * 1.2f)
                     progress?.update(st, st2.speedCameras, pal, icons.orEmpty())
                     // Route overview refreshes now and then as the route shrinks.
                     if (st != null && st2.navView == NavView.OVERVIEW && following &&
@@ -167,14 +168,9 @@ class CarMapRenderer(private val carContext: CarContext, private val lifecycle: 
                     }
                 }
             }
-            launch {
-                // Smooth puck and camera: ~20 position updates per second.
-                while (true) {
-                    smoother.frame()?.let { ctrl.updateLocation(it) }
-                    smoother.alongOn(ctrl.activeLine)?.let { ctrl.setRouteProgress(it) }
-                    kotlinx.coroutines.delay(50)
-                }
-            }
+            // Smooth puck and camera: one position update per display frame (vsync), not a timer –
+            // timer ticks drift against the frames of the car display and made the map judder.
+            startFrames()
             launch {
                 combine(HazardRepo.incidents, HazardRepo.cameras, VoidMapsApp.settings) { a, b, s -> a + if (s.speedCameras) b else emptyList() }
                     .collect { ctrl.setHazards(it) }
@@ -252,9 +248,10 @@ class CarMapRenderer(private val carContext: CarContext, private val lifecycle: 
         // Progress bar at the right edge of the free map area.
         progress?.let { bar ->
             val d = bar.resources.displayMetrics.density
-            val lp = android.widget.FrameLayout.LayoutParams((44 * d).toInt(), (visibleArea.height() - 60 * d).toInt().coerceAtLeast(0))
-            lp.leftMargin = visibleArea.right - (52 * d).toInt()
-            lp.topMargin = visibleArea.top + (30 * d).toInt()
+            val w = (CarProgressView.WIDTH_DP * CarProgressView.SCALE * d).toInt()
+            val lp = android.widget.FrameLayout.LayoutParams(w, (visibleArea.height() - 40 * d).toInt().coerceAtLeast(0))
+            lp.leftMargin = visibleArea.right - w - (10 * d).toInt()
+            lp.topMargin = visibleArea.top + (20 * d).toInt()
             bar.layoutParams = lp
         }
         applyFollow()
@@ -273,7 +270,31 @@ class CarMapRenderer(private val carContext: CarContext, private val lifecycle: 
 
     override fun onSurfaceDestroyed(surfaceContainer: SurfaceContainer) = release()
 
+    private var framesRunning = false
+    private var frameCount = 0
+    private val frameCallback = object : android.view.Choreographer.FrameCallback {
+        override fun doFrame(frameTimeNanos: Long) {
+            val ctrl = controller
+            if (!framesRunning || ctrl == null) {
+                framesRunning = false
+                return
+            }
+            smoother.frame()?.let { ctrl.updateLocation(it) }
+            // The route start follows every second frame (~30 Hz) – plenty, and cheaper.
+            if (frameCount++ % 2 == 0) smoother.alongOn(ctrl.activeLine)?.let { ctrl.setRouteProgress(it) }
+            android.view.Choreographer.getInstance().postFrameCallback(this)
+        }
+    }
+
+    private fun startFrames() {
+        if (framesRunning) return
+        framesRunning = true
+        android.view.Choreographer.getInstance().postFrameCallback(frameCallback)
+    }
+
     private fun release() {
+        framesRunning = false
+        android.view.Choreographer.getInstance().removeFrameCallback(frameCallback)
         stateJob?.cancel()
         stateJob = null
         controller?.detach()

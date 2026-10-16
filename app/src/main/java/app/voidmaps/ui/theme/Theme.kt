@@ -60,11 +60,11 @@ fun mapPalette(design: Design): MapPalette = when (design) {
 fun colorsFor(design: Design): VoidColors = when (design) {
     Design.VOID -> VoidColors(
         background = Color(0xFF000000),
-        surface = Color(0xFF0E0E0E),
-        surfaceHigh = Color(0xFF1A1A1A),
-        text = Color(0xFFF2F2F2),
-        textMuted = Color(0xFF8C8C8C),
-        divider = Color.White.copy(alpha = 0.09f),
+        surface = Color(0xFF121212),
+        surfaceHigh = Color(0xFF222222),
+        text = Color(0xFFFFFFFF),
+        textMuted = Color(0xFFB0B0B0),
+        divider = Color.White.copy(alpha = 0.16f),
         accent = Color(0xFFD71921),
         onAccent = Color.White,
         accent2 = Color(0xFFD71921),

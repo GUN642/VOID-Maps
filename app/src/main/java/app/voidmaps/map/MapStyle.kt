@@ -48,31 +48,31 @@ object Palettes {
     val VOID = MapPalette(
         dark = true,
         background = "#000000",
-        water = "#0E1114",
-        waterLine = "#15191D",
-        park = "#060906",
-        wood = "#070A07",
-        landuse = "#040404",
-        building = "#131313",
-        building3d = "#1E1E1E",
+        water = "#0F1D27",
+        waterLine = "#1C2E3B",
+        park = "#0A130A",
+        wood = "#0B150B",
+        landuse = "#080808",
+        building = "#1C1C1C",
+        building3d = "#2C2C2C",
         hillShadow = "#000000",
-        hillHighlight = "#262626",
-        minor = "#1D1D1D",
-        secondary = "#2A2A2A",
-        primary = "#383838",
-        trunk = "#4A4A4A",
-        motorway = "#646464",
+        hillHighlight = "#363636",
+        minor = "#333333",
+        secondary = "#474747",
+        primary = "#5E5E5E",
+        trunk = "#767676",
+        motorway = "#9A9A9A",
         casing = null,
         motorwayCasing = null,
-        path = "#1A1A1A",
-        rail = "#222222",
-        boundary = "#3A3A3A",
-        label = "#8A8A8A",
+        path = "#2C2C2C",
+        rail = "#383838",
+        boundary = "#555555",
+        label = "#C2C2C2",
         labelHalo = "#000000",
-        place = "#E8E8E8",
+        place = "#FFFFFF",
         route = "#D71921",
         routeCasing = "#3A0407",
-        routeAlt = "#4E4E4E",
+        routeAlt = "#707070",
         trafficFree = null,
         trafficSlow = "#FFB800",
         trafficHeavy = "#FF5A1F",
@@ -131,6 +131,10 @@ data class StyleConfig(
     val tomtomSatellite: Boolean = false,
     /** Official aerial photos (DOP20) of Baden-Württemberg and Bavaria over the base imagery. */
     val officialImagery: Boolean = true,
+    /** Size factor for speed cameras (Android Auto draws them much larger). */
+    val cameraScale: Double = 1.0,
+    /** Size factor for the other warnings (jams, roadworks, …). */
+    val hazardScale: Double = 1.0,
 )
 
 fun styleConfigFor(s: app.voidmaps.data.AppSettings, palette: MapPalette) = StyleConfig(
@@ -447,7 +451,10 @@ object MapStyle {
                 "icon-image" to listOf("get", "icon"),
                 "icon-allow-overlap" to true,
                 "icon-ignore-placement" to true,
-                "icon-size" to listOf("interpolate", listOf("linear"), listOf("zoom"), 8, 0.6, 14, 1.0),
+                "icon-size" to run {
+                    val f = listOf("case", listOf("==", listOf("get", "rank"), 1), c.cameraScale, c.hazardScale)
+                    listOf("interpolate", listOf("linear"), listOf("zoom"), 8, listOf("*", 0.6, f), 14, listOf("*", 1.0, f))
+                },
                 "symbol-sort-key" to listOf("get", "rank"),
             ),
         )

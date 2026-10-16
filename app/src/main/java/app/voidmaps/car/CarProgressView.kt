@@ -15,7 +15,8 @@ import app.voidmaps.nav.NavState
 
 /** Route progress bar drawn on the Android Auto map: cameras, jams, incidents, stops and destination ahead. */
 class CarProgressView(context: Context) : View(context) {
-    private val d = resources.displayMetrics.density
+    /** Drawing unit: large, so the bar stays readable on big (e.g. 15 inch) car displays. */
+    private val d = resources.displayMetrics.density * SCALE
     private var state: NavState? = null
     private var cameras = false
     private var icons: Map<String, Bitmap> = emptyMap()
@@ -37,19 +38,19 @@ class CarProgressView(context: Context) : View(context) {
         val along = s.snap?.along ?: 0.0
         val horizon = s.remainingDistance.coerceIn(1_000.0, 30_000.0)
         val cx = width / 2f
-        val top = 26 * d
+        val top = 30 * d
         val bottom = height - 50 * d
         fun y(dist: Double) = bottom - ((dist / horizon).coerceIn(0.0, 1.0) * (bottom - top)).toFloat()
 
         // Backing plate so the bar reads on any map.
         paint.style = Paint.Style.FILL
-        paint.color = Color.argb(150, 0, 0, 0)
+        paint.color = Color.argb(215, 0, 0, 0)
         canvas.drawRoundRect(RectF(cx - 18 * d, 0f, cx + 18 * d, height.toFloat()), 18 * d, 18 * d, paint)
 
         paint.strokeCap = Paint.Cap.ROUND
         paint.style = Paint.Style.STROKE
         paint.strokeWidth = 6 * d
-        paint.color = Color.argb(110, 255, 255, 255)
+        paint.color = Color.argb(150, 255, 255, 255)
         canvas.drawLine(cx, top, cx, bottom, paint)
 
         val amber = Color.parseColor("#FFB800")
@@ -92,7 +93,7 @@ class CarProgressView(context: Context) : View(context) {
             paint.color = Color.WHITE
             canvas.drawCircle(cx, y(s.remainingDistance), 3 * d, paint)
         }
-        val size = (24 * d).toInt()
+        val size = (28 * d).toInt()
         events.forEach { e ->
             val bmp = icons[e.hazard.type.icon] ?: return@forEach
             val yy = y((e.along - along).coerceAtLeast(0.0))
@@ -102,8 +103,8 @@ class CarProgressView(context: Context) : View(context) {
         // Horizon on top, own arrow and distance to the next event at the bottom.
         paint.color = Color.WHITE
         paint.textAlign = Paint.Align.CENTER
-        paint.typeface = Typeface.MONOSPACE
-        paint.textSize = 10 * d
+        paint.typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
+        paint.textSize = 11 * d
         canvas.drawText(Format.distance(horizon).uppercase(), cx, 14 * d, paint)
         paint.color = route
         val arrow = android.graphics.Path().apply {
@@ -117,7 +118,14 @@ class CarProgressView(context: Context) : View(context) {
         val next = events.filter { it.along >= along - 10 }.minByOrNull { it.along }
         val dist = if (next != null) (next.along - along).coerceAtLeast(0.0) else s.remainingDistance
         paint.color = Color.WHITE
-        paint.textSize = 10 * d
+        paint.textSize = 11 * d
         canvas.drawText(Format.distance(dist).uppercase(), cx, bottom + 40 * d, paint)
+    }
+
+    companion object {
+        /** Size of the bar compared with the phone version. */
+        const val SCALE = 1.8f
+        /** Width of the bar in dp at [SCALE] 1. */
+        const val WIDTH_DP = 44
     }
 }

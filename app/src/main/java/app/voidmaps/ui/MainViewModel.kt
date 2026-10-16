@@ -474,6 +474,36 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     // ------------------------------------------------------------------ voice / orientation
 
+    // ------------------------------------------------------------------ voices
+
+    private var voiceSpeaker: app.voidmaps.nav.Speaker? = null
+
+    /** Own speech engine for the voice list and previews in the settings. */
+    fun voiceSpeaker(): app.voidmaps.nav.Speaker =
+        voiceSpeaker ?: app.voidmaps.nav.Speaker(getApplication()).also { voiceSpeaker = it }
+
+    fun chooseVoice(name: String) {
+        update { setVoiceName(name) }
+        previewVoice(name, settings.value.speechRate)
+    }
+
+    fun chooseSpeechRate(rate: Float) {
+        update { setSpeechRate(rate) }
+        previewVoice(settings.value.voiceName, rate)
+    }
+
+    private fun previewVoice(name: String, rate: Float) {
+        val sp = voiceSpeaker()
+        sp.configure(name, rate)
+        sp.speak("In 300 Metern rechts abbiegen. Danach links halten auf die A 81 Richtung Heilbronn.", interrupt = true)
+    }
+
+    override fun onCleared() {
+        voiceSpeaker?.shutdown()
+        voiceSpeaker = null
+        super.onCleared()
+    }
+
     fun cycleVoice() {
         val next = when (settings.value.voiceMode) {
             VoiceMode.ALL -> VoiceMode.WARNINGS

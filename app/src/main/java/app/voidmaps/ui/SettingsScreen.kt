@@ -126,6 +126,7 @@ fun SettingsScreen(vm: MainViewModel, s: AppSettings, onBack: () -> Unit) {
             Toggle("Kurze Ansagen", "„In 300 Metern rechts abbiegen“ statt ausführlicher Sätze", s.shortAnnouncements) { v ->
                 vm.update { setShortAnnouncements(v) }
             }
+            VoiceSection(vm, s)
             Toggle("Mautstraßen vermeiden", null, s.avoidTolls) { v -> vm.update { setAvoidTolls(v) } }
             Toggle("Autobahnen vermeiden", null, s.avoidMotorways) { v -> vm.update { setAvoidMotorways(v) } }
             Spacer(Modifier.height(8.dp))
@@ -214,6 +215,79 @@ fun SettingsScreen(vm: MainViewModel, s: AppSettings, onBack: () -> Unit) {
                 color = c.textMuted, style = MaterialTheme.typography.bodyMedium,
             )
         }
+    }
+}
+
+/** Voice of the announcements: the German voices of the phone's speech engine, plus speaking rate. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun VoiceSection(vm: MainViewModel, s: AppSettings) {
+    val c = VoidTheme.colors
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val speaker = remember { vm.voiceSpeaker() }
+    val voices by speaker.voices.collectAsState()
+    Spacer(Modifier.height(8.dp))
+    Label("Stimme")
+    Spacer(Modifier.height(8.dp))
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        VoiceRow("Standard", "Voreinstellung der Sprachausgabe", s.voiceName.isBlank()) { vm.chooseVoice("") }
+        voices.forEach { v -> VoiceRow(v.label, v.detail, v.name == s.voiceName) { vm.chooseVoice(v.name) } }
+    }
+    if (voices.isEmpty()) {
+        Spacer(Modifier.height(4.dp))
+        Text("Stimmen werden geladen …", color = c.textMuted, style = MaterialTheme.typography.bodyMedium)
+    }
+    Spacer(Modifier.height(10.dp))
+    Label("Sprechtempo")
+    Spacer(Modifier.height(8.dp))
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        listOf("Ruhig" to 0.9f, "Normal" to 1.0f, "Zügig" to 1.12f).forEach { (label, rate) ->
+            Pill(label, selected = kotlin.math.abs(s.speechRate - rate) < 0.01f, onClick = { vm.chooseSpeechRate(rate) })
+        }
+    }
+    Spacer(Modifier.height(8.dp))
+    Text(
+        "Antippen spielt eine Probeansage. Am natürlichsten klingen die Online-Stimmen der „Sprachausgabe von Google“ " +
+            "(ohne Netz wird automatisch die Offline-Stimme genutzt). " +
+            (if (speaker.engineLabel.isNotBlank()) "Aktuelle Sprachausgabe: ${speaker.engineLabel}." else ""),
+        color = c.textMuted, style = MaterialTheme.typography.bodyMedium,
+    )
+    Spacer(Modifier.height(8.dp))
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Pill("Stimmen herunterladen", selected = false, onClick = {
+            runCatching {
+                context.startActivity(
+                    android.content.Intent(android.speech.tts.TextToSpeech.Engine.ACTION_INSTALL_TTS_DATA)
+                        .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
+                )
+            }.onFailure { vm.toast("Nicht verfügbar") }
+        })
+        Pill("Sprachausgabe-Einstellungen", selected = false, onClick = {
+            runCatching {
+                context.startActivity(android.content.Intent("com.android.settings.TTS_SETTINGS").addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+            }.onFailure { vm.toast("Nicht verfügbar") }
+        })
+    }
+    Spacer(Modifier.height(6.dp))
+}
+
+@Composable
+private fun VoiceRow(title: String, detail: String, selected: Boolean, onClick: () -> Unit) {
+    val c = VoidTheme.colors
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .border(1.dp, if (selected) c.accent else c.divider, RoundedCornerShape(14.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(title, color = c.text, style = MaterialTheme.typography.bodyLarge)
+            Text(detail, color = c.textMuted, style = MaterialTheme.typography.bodyMedium)
+        }
+        if (selected) Box(Modifier.size(10.dp).clip(androidx.compose.foundation.shape.CircleShape).background(c.accent))
     }
 }
 

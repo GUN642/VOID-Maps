@@ -14,8 +14,9 @@ import app.voidmaps.data.ChargeOperator
 object MapIcons {
     private enum class Glyph { BANG, DOTS, CONE, BAR, LANES, CAMERA, DROP }
 
-    fun all(context: Context, p: MapPalette): Map<String, Bitmap> {
-        val d = context.resources.displayMetrics.density
+    /** [scale] > 1 renders larger, sharp bitmaps (Android Auto progress bar). */
+    fun all(context: Context, p: MapPalette, scale: Float = 1f): Map<String, Bitmap> {
+        val d = context.resources.displayMetrics.density * scale
         val ring = if (p.dark) Color.BLACK else Color.WHITE
         val warn = Color.parseColor(p.warn)
         val amber = Color.parseColor("#FFB800")

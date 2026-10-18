@@ -285,7 +285,11 @@ private fun StopBar(name: String, distance: Double, seconds: Double, count: Int,
 @Composable
 private fun ManeuverCard(s: NavState, compact: Boolean = false) {
     val c = VoidTheme.colors
-    val m = s.route.maneuvers.getOrNull(s.next)
+    val m = if (s.turnAround) {
+        app.voidmaps.data.Maneuver(ManeuverKind.UTURN, "", "", "Bitte wenden, wenn möglich", null, 0)
+    } else {
+        s.route.maneuvers.getOrNull(s.next)
+    }
     val dark = c.isDark
     // VOID: black card, white text, red arrow. Light designs: accent card for contrast on the bright map.
     val bg = if (dark) c.surface else c.accent
@@ -305,7 +309,10 @@ private fun ManeuverCard(s: NavState, compact: Boolean = false) {
             if (m != null) ManeuverIcon(m.kind, arrow, Modifier.size(if (compact) 54.dp else 72.dp), exit = m.exit)
             Spacer(Modifier.width(if (compact) 12.dp else 16.dp))
             Column(Modifier.weight(1f)) {
-                Text(Format.distance(s.distanceToNext).uppercase(), style = dotNumber(if (compact) 32 else 44), color = fg)
+                Text(
+                    if (s.turnAround) "WENDEN" else Format.distance(s.distanceToNext).uppercase(),
+                    style = dotNumber(if (compact) 32 else 44), color = fg,
+                )
                 val street = m?.street
                 Text(
                     street ?: m?.text?.trimEnd('.') ?: s.destination.name,
@@ -319,7 +326,7 @@ private fun ManeuverCard(s: NavState, compact: Boolean = false) {
         }
         // Next-but-one manoeuvre when it follows closely.
         val after = s.route.maneuvers.getOrNull(s.next + 1)
-        if (after != null && s.next + 1 < s.route.maneuverAlong.size &&
+        if (after != null && !s.turnAround && s.next + 1 < s.route.maneuverAlong.size &&
             s.route.maneuverAlong[s.next + 1] - s.route.maneuverAlong[s.next] < 300
         ) {
             Spacer(Modifier.height(10.dp))
@@ -553,6 +560,80 @@ private fun DemoBar() {
             Pill(if (paused) "Weiter" else "Pause", selected = paused, onClick = {
                 app.voidmaps.nav.DemoDrive.paused.value = !paused
             }, filledColor = c.accent)
+        }
+    }
+}
+
+/** Width of the turn card column on the car display. */
+val CAR_PANEL = 360.dp
+
+/**
+ * Android Auto: the same navigation view as on the phone (turn card, lanes, warnings, stop,
+ * arrival bar, progress bar and speed), drawn over the car map. Not touchable – the car
+ * controls stay in Android Auto's own buttons.
+ */
+@Composable
+fun CarNavOverlay(s: NavState, settings: AppSettings) {
+    Box(Modifier.fillMaxSize()) {
+        Column(
+            Modifier.align(Alignment.TopStart).width(CAR_PANEL).padding(10.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            ManeuverCard(s, compact = true)
+            s.lanes?.let { LaneStrip(it) }
+            s.warning?.let { w -> WarningBanner(w.hazard.type, w.hazard.description, w.distance) }
+        }
+        Column(
+            Modifier.align(Alignment.BottomStart).width(CAR_PANEL).padding(10.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            val nextStop = s.stops.firstOrNull()
+            if (nextStop != null && s.nextStopDistance != null && !s.arrived) {
+                CarStopBar(nextStop.name, s.nextStopDistance, s.nextStopTime ?: 0.0, s.stops.size)
+            }
+            if (s.arrived) {
+                MapCard(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(20.dp)) {
+                        Text("ZIEL ERREICHT", style = headingStyle(28), color = VoidTheme.colors.text)
+                        Text(s.destination.name, style = MaterialTheme.typography.bodyLarge, color = VoidTheme.colors.textMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+            } else {
+                MapCard(Modifier.fillMaxWidth()) {
+                    Row(Modifier.padding(horizontal = 20.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Stat(Format.clock(s.eta), "Ankunft", Modifier.weight(1f), highlight = true)
+                        Stat(Format.hhmm(s.remainingTime), "Restzeit", Modifier.weight(1f))
+                        Stat(Format.distance(s.remainingDistance), "Strecke", Modifier.weight(1f))
+                    }
+                }
+            }
+        }
+        Row(
+            Modifier.align(Alignment.CenterEnd).fillMaxHeight().padding(vertical = 10.dp, horizontal = 6.dp),
+            verticalAlignment = Alignment.Bottom,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            SpeedBubble(s.speedKmh)
+            RouteProgressBar(s, settings, Modifier.width(52.dp).fillMaxHeight())
+        }
+    }
+}
+
+@Composable
+private fun CarStopBar(name: String, distance: Double, seconds: Double, count: Int) {
+    val c = VoidTheme.colors
+    MapCard(Modifier.fillMaxWidth()) {
+        Row(Modifier.padding(horizontal = 18.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(10.dp).clip(CircleShape).border(2.dp, c.accent, CircleShape))
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Label(if (count > 1) "Zwischenziel 1 von $count" else "Zwischenziel")
+                Text(name, style = MaterialTheme.typography.bodyLarge, color = c.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            Column(horizontalAlignment = Alignment.End) {
+                Text(Format.clock(System.currentTimeMillis() + (seconds * 1000).toLong()), style = dotNumber(18), color = c.accent)
+                Label("${Format.hhmm(seconds)} · ${Format.distance(distance)}")
+            }
         }
     }
 }

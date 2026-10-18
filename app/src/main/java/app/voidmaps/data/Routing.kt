@@ -48,7 +48,9 @@ class Route(
     /** Lane guidance (only from TomTom routing). */
     val laneSections: List<LaneSection> = emptyList(),
     /** Traffic sections as point indices (only from TomTom routing): start, end, level, works, delay. */
-    trafficIndices: List<IntArray> = emptyList(),
+    private val trafficIndices: List<IntArray> = emptyList(),
+    /** True once the geometry was aligned to the OpenStreetMap roads of the map ([RouteMatcher]). */
+    val matched: Boolean = false,
 ) {
     val line = Polyline(points)
     val distance: Double get() = line.length
@@ -103,6 +105,35 @@ class Route(
         kotlin.math.abs(distance - other.distance) < 300 && kotlin.math.abs(duration - other.duration) < 60
 
     val totalTime: Double get() = cumulativeTime.lastOrNull() ?: 0.0
+
+    /**
+     * The same route on new geometry. [indexMap] gives, for every point of this route, its index in
+     * [newPoints] (non-decreasing, first 0, last newPoints.size - 1); manoeuvres, lanes, traffic and
+     * travel times move along with it.
+     */
+    fun withGeometry(newPoints: List<GeoPoint>, indexMap: IntArray): Route {
+        require(indexMap.size == points.size && newPoints.size >= 2)
+        fun m(i: Int) = indexMap[i.coerceIn(0, indexMap.size - 1)]
+        val newLine = Polyline(newPoints)
+        val cum = newLine.cumulative
+        val ct = DoubleArray(newPoints.size)
+        for (k in 0 until indexMap.size - 1) {
+            val a = indexMap[k]
+            val b = indexMap[k + 1]
+            val ta = cumulativeTime[k]
+            val tb = cumulativeTime[k + 1]
+            val span = cum[b] - cum[a]
+            for (j in a..b) ct[j] = ta + if (span <= 0) 0.0 else (tb - ta) * (cum[j] - cum[a]) / span
+        }
+        return Route(
+            newPoints,
+            maneuvers.map { it.copy(pointIndex = m(it.pointIndex)) },
+            duration, trafficDelay, engine, ct, waypoints,
+            laneSections.map { it.copy(startIndex = m(it.startIndex), endIndex = m(it.endIndex)) },
+            trafficIndices.map { intArrayOf(m(it[0]), m(it[1]), it[2], it[3], it[4]) },
+            matched = true,
+        )
+    }
 
     /** Metres along the route after [seconds] of driving (used by the demo drive). */
     fun alongAtTime(seconds: Double): Double {

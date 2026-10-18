@@ -9,8 +9,6 @@ import androidx.car.app.Session
 import androidx.car.app.model.Action
 import androidx.car.app.model.ActionStrip
 import androidx.car.app.model.CarIcon
-import androidx.car.app.model.DateTimeWithZone
-import androidx.car.app.model.Distance
 import androidx.car.app.model.ItemList
 import androidx.car.app.model.ListTemplate
 import androidx.car.app.model.Row
@@ -18,14 +16,7 @@ import androidx.car.app.model.SearchTemplate
 import androidx.car.app.model.Template
 import androidx.car.app.navigation.NavigationManager
 import androidx.car.app.navigation.NavigationManagerCallback
-import androidx.car.app.navigation.model.LaneDirection
-import androidx.car.app.navigation.model.Maneuver
-import androidx.car.app.navigation.model.Lane as CarLane
-import androidx.car.app.navigation.model.MessageInfo
 import androidx.car.app.navigation.model.NavigationTemplate
-import androidx.car.app.navigation.model.RoutingInfo
-import androidx.car.app.navigation.model.Step
-import androidx.car.app.navigation.model.TravelEstimate
 import androidx.car.app.validation.HostValidator
 import androidx.core.graphics.drawable.IconCompat
 import androidx.lifecycle.lifecycleScope
@@ -34,15 +25,12 @@ import app.voidmaps.VoidMapsApp
 import app.voidmaps.data.Format
 import app.voidmaps.data.Geo
 import app.voidmaps.data.GeoPoint
-import app.voidmaps.data.LaneDir
-import app.voidmaps.data.ManeuverKind
 import app.voidmaps.data.Place
 import app.voidmaps.data.RouteOptions
 import app.voidmaps.data.Routing
 import app.voidmaps.data.Search
 import app.voidmaps.data.VoiceMode
 import app.voidmaps.nav.LocationTracker
-import app.voidmaps.nav.NavState
 import app.voidmaps.nav.Navigator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -51,7 +39,6 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.util.TimeZone
 
 /** Entry point for Android Auto. Sideloaded apps need "Unbekannte Quellen" in the Android Auto developer settings. */
 class VoidCarAppService : CarAppService() {
@@ -68,12 +55,6 @@ class VoidCarSession : Session() {
 }
 
 private fun icon(ctx: CarContext, res: Int): CarIcon = CarIcon.Builder(IconCompat.createWithResource(ctx, res)).build()
-
-private fun distance(m: Double): Distance = when {
-    m < 1000 -> Distance.create(((m / 10).toInt() * 10).toDouble().coerceAtLeast(0.0), Distance.UNIT_METERS)
-    m < 10_000 -> Distance.create(m / 1000, Distance.UNIT_KILOMETERS_P1)
-    else -> Distance.create(m / 1000, Distance.UNIT_KILOMETERS)
-}
 
 /** Starts guidance to [place] from the current position; used by the car screens. */
 private suspend fun startRoute(ctx: CarContext, place: Place): Boolean {
@@ -189,99 +170,8 @@ class CarNavScreen(carContext: CarContext, private val renderer: CarMapRenderer)
                 .addAction(Action.Builder().setIcon(icon(carContext, R.drawable.ic_car_minus)).setOnClickListener { renderer.zoomOut() }.build())
                 .build(),
         )
-        if (s != null) {
-            when {
-                s.arrived -> builder.setNavigationInfo(MessageInfo.Builder("Ziel erreicht").setText(s.destination.name).build())
-                s.rerouting -> builder.setNavigationInfo(MessageInfo.Builder("Route wird neu berechnet …").build())
-                else -> routingInfo(s)?.let { builder.setNavigationInfo(it) }
-            }
-            if (!s.arrived) {
-                builder.setDestinationTravelEstimate(
-                    TravelEstimate.Builder(distance(s.remainingDistance), DateTimeWithZone.create(s.eta, TimeZone.getDefault()))
-                        .setRemainingTimeSeconds(s.remainingTime.toLong().coerceAtLeast(0))
-                        .build(),
-                )
-            }
-        }
+        // Turn card, arrival time etc. are drawn by VOID Maps itself on the map (same view as on the phone).
         return builder.build()
-    }
-
-    private fun carManeuver(kind: ManeuverKind, exit: Int?): Maneuver {
-        val type = when (kind) {
-            ManeuverKind.DEPART -> Maneuver.TYPE_DEPART
-            ManeuverKind.STRAIGHT -> Maneuver.TYPE_STRAIGHT
-            ManeuverKind.SLIGHT_RIGHT -> Maneuver.TYPE_TURN_SLIGHT_RIGHT
-            ManeuverKind.RIGHT -> Maneuver.TYPE_TURN_NORMAL_RIGHT
-            ManeuverKind.SHARP_RIGHT -> Maneuver.TYPE_TURN_SHARP_RIGHT
-            ManeuverKind.UTURN -> Maneuver.TYPE_U_TURN_LEFT
-            ManeuverKind.SHARP_LEFT -> Maneuver.TYPE_TURN_SHARP_LEFT
-            ManeuverKind.LEFT -> Maneuver.TYPE_TURN_NORMAL_LEFT
-            ManeuverKind.SLIGHT_LEFT -> Maneuver.TYPE_TURN_SLIGHT_LEFT
-            ManeuverKind.KEEP_RIGHT -> Maneuver.TYPE_KEEP_RIGHT
-            ManeuverKind.KEEP_LEFT -> Maneuver.TYPE_KEEP_LEFT
-            ManeuverKind.EXIT_RIGHT -> Maneuver.TYPE_OFF_RAMP_NORMAL_RIGHT
-            ManeuverKind.EXIT_LEFT -> Maneuver.TYPE_OFF_RAMP_NORMAL_LEFT
-            ManeuverKind.MERGE -> Maneuver.TYPE_MERGE_SIDE_UNSPECIFIED
-            ManeuverKind.ROUNDABOUT -> if (exit != null) Maneuver.TYPE_ROUNDABOUT_ENTER_AND_EXIT_CCW else Maneuver.TYPE_ROUNDABOUT_ENTER_CCW
-            ManeuverKind.FERRY -> Maneuver.TYPE_FERRY_BOAT
-            ManeuverKind.ARRIVE -> Maneuver.TYPE_DESTINATION
-        }
-        val mb = Maneuver.Builder(type)
-            .setIcon(CarIcon.Builder(IconCompat.createWithBitmap(CarIcons.maneuver(kind))).build())
-        if (type == Maneuver.TYPE_ROUNDABOUT_ENTER_AND_EXIT_CCW) mb.setRoundaboutExitNumber(exit ?: 1)
-        return mb.build()
-    }
-
-    private fun laneShape(d: LaneDir): Int = when (d) {
-        LaneDir.STRAIGHT -> LaneDirection.SHAPE_STRAIGHT
-        LaneDir.SLIGHT_RIGHT -> LaneDirection.SHAPE_SLIGHT_RIGHT
-        LaneDir.RIGHT -> LaneDirection.SHAPE_NORMAL_RIGHT
-        LaneDir.SHARP_RIGHT -> LaneDirection.SHAPE_SHARP_RIGHT
-        LaneDir.SLIGHT_LEFT -> LaneDirection.SHAPE_SLIGHT_LEFT
-        LaneDir.LEFT -> LaneDirection.SHAPE_NORMAL_LEFT
-        LaneDir.SHARP_LEFT -> LaneDirection.SHAPE_SHARP_LEFT
-        LaneDir.UTURN -> LaneDirection.SHAPE_U_TURN_LEFT
-    }
-
-    private fun laneKind(d: LaneDir): ManeuverKind = when (d) {
-        LaneDir.STRAIGHT -> ManeuverKind.STRAIGHT
-        LaneDir.SLIGHT_RIGHT -> ManeuverKind.SLIGHT_RIGHT
-        LaneDir.RIGHT -> ManeuverKind.RIGHT
-        LaneDir.SHARP_RIGHT -> ManeuverKind.SHARP_RIGHT
-        LaneDir.SLIGHT_LEFT -> ManeuverKind.SLIGHT_LEFT
-        LaneDir.LEFT -> ManeuverKind.LEFT
-        LaneDir.SHARP_LEFT -> ManeuverKind.SHARP_LEFT
-        LaneDir.UTURN -> ManeuverKind.UTURN
-    }
-
-    private fun routingInfo(s: NavState): RoutingInfo? {
-        val m = s.route.maneuvers.getOrNull(s.next) ?: return null
-        val cue = m.street ?: m.text.trimEnd('.').ifBlank { s.destination.name }
-        val step = Step.Builder(cue).setManeuver(carManeuver(m.kind, m.exit))
-        m.street?.let { step.setRoad(it) }
-        s.lanes?.let { section ->
-            runCatching {
-                section.lanes.forEach { lane ->
-                    val lb = CarLane.Builder()
-                    lane.directions.forEach { d ->
-                        lb.addDirection(LaneDirection.create(laneShape(d), lane.recommended && (lane.follow == null || d == lane.follow)))
-                    }
-                    step.addLane(lb.build())
-                }
-                step.setLanesImage(CarIcon.Builder(IconCompat.createWithBitmap(CarIcons.lanes(section, ::laneKind))).build())
-            }
-        }
-        val info = RoutingInfo.Builder().setCurrentStep(step.build(), distance(s.distanceToNext))
-        s.route.maneuvers.getOrNull(s.next + 1)?.let { after ->
-            if (after.kind != ManeuverKind.STRAIGHT) {
-                info.setNextStep(
-                    Step.Builder(after.street ?: after.text.trimEnd('.').ifBlank { s.destination.name })
-                        .setManeuver(carManeuver(after.kind, after.exit))
-                        .build(),
-                )
-            }
-        }
-        return info.build()
     }
 }
 

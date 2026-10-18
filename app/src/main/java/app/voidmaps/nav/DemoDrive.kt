@@ -61,9 +61,11 @@ object DemoDrive {
                 while (true) {
                     val st = Navigator.state.value ?: break
                     if (st.routeVersion != version) {
-                        // New route (faster route, new stop): it starts where the car is now.
+                        // New route (faster route, new stop) starts where the car is now; a route that was
+                        // only aligned to the map continues from the same place.
                         version = st.routeVersion
-                        t = 0.0
+                        val a = st.snap?.along ?: 0.0
+                        t = (st.route.totalTime - st.route.remainingTime(a)).coerceAtLeast(0.0)
                     }
                     if (!paused.value) t += 0.2 * speed.value
                     val r = st.route

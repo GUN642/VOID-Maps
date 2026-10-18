@@ -52,7 +52,7 @@ class CarMapRenderer(private val carContext: CarContext, private val lifecycle: 
             }
         }
     var onFollowingChanged: () -> Unit = {}
-    private var progress: CarProgressView? = null
+    private var overlay: CarOverlay? = null
     private var surfaceWidth = 0
     private var surfaceHeight = 0
     private var lastOverview = 0L
@@ -65,11 +65,19 @@ class CarMapRenderer(private val carContext: CarContext, private val lifecycle: 
     override fun onCreate(owner: LifecycleOwner) {
         carContext.getCarService(AppManager::class.java).setSurfaceCallback(this)
         LocationTracker.acquire(carContext, "car")
+        // Foreground service so the position keeps updating with the phone locked in the pocket.
+        app.voidmaps.nav.NavigationService.carSession.value = true
+        runCatching {
+            androidx.core.content.ContextCompat.startForegroundService(
+                carContext, android.content.Intent(carContext, app.voidmaps.nav.NavigationService::class.java),
+            )
+        }
     }
 
     override fun onDestroy(owner: LifecycleOwner) {
         release()
         LocationTracker.release("car")
+        app.voidmaps.nav.NavigationService.carSession.value = false
     }
 
     override fun onSurfaceAvailable(surfaceContainer: SurfaceContainer) {
@@ -83,11 +91,12 @@ class CarMapRenderer(private val carContext: CarContext, private val lifecycle: 
         display = vd
         val pres = Presentation(carContext, vd.display)
         val mv = MapView(pres.context)
-        val bar = CarProgressView(pres.context)
         val root = android.widget.FrameLayout(pres.context)
         root.addView(mv, android.widget.FrameLayout.LayoutParams(-1, -1))
-        root.addView(bar, android.widget.FrameLayout.LayoutParams(0, 0))
-        progress = bar
+        // The phone's navigation view (turn card, progress bar, arrival …) on top of the map.
+        val ov = CarOverlay(pres.context, carContext)
+        root.addView(ov.view, android.widget.FrameLayout.LayoutParams(-1, -1))
+        overlay = ov
         surfaceWidth = surfaceContainer.width
         surfaceHeight = surfaceContainer.height
         pres.setContentView(root)
@@ -114,10 +123,9 @@ class CarMapRenderer(private val carContext: CarContext, private val lifecycle: 
         }
     }
 
-    private var icons: Map<String, android.graphics.Bitmap>? = null
 
     private fun observe(ctrl: MapController) {
-        val pres = presentation ?: return
+        if (presentation == null) return
         stateJob?.cancel()
         stateJob = lifecycle.coroutineScope.launch {
             launch {
@@ -135,7 +143,8 @@ class CarMapRenderer(private val carContext: CarContext, private val lifecycle: 
             }
             launch {
                 combine(LocationTracker.location, Navigator.state) { l, n -> l to n }.collect { (loc, nav) ->
-                    if (loc != null) smoother.onFix(loc, nav)
+                    // Without a route the position is pulled onto the nearest road while driving.
+                    if (loc != null) smoother.onFix(if (nav == null && loc.speed > 3f) ctrl.snapToRoad(loc) else loc, nav)
                     if (nav != null) {
                         val sn = nav.snap
                         if (ctrl.activeLine !== nav.route.line) {
@@ -156,10 +165,6 @@ class CarMapRenderer(private val carContext: CarContext, private val lifecycle: 
                     wasNavigating = st != null
                     applyFollow()
                     val st2 = VoidMapsApp.settings.value
-                    val design = resolveDesign(st2.theme, carContext.isDarkMode)
-                    val pal = mapPalette(design)
-                    if (icons == null) icons = app.voidmaps.map.MapIcons.all(pres.context, pal, CarProgressView.SCALE * 1.2f)
-                    progress?.update(st, st2.speedCameras, pal, icons.orEmpty())
                     // Route overview refreshes now and then as the route shrinks.
                     if (st != null && st2.navView == NavView.OVERVIEW && following &&
                         System.currentTimeMillis() - lastOverview > 30_000
@@ -171,6 +176,7 @@ class CarMapRenderer(private val carContext: CarContext, private val lifecycle: 
             // Smooth puck and camera: one position update per display frame (vsync), not a timer –
             // timer ticks drift against the frames of the car display and made the map judder.
             startFrames()
+            launch { frameWatchdog() }
             launch {
                 combine(HazardRepo.incidents, HazardRepo.cameras, VoidMapsApp.settings) { a, b, s -> a + if (s.speedCameras) b else emptyList() }
                     .collect { ctrl.setHazards(it) }
@@ -195,6 +201,8 @@ class CarMapRenderer(private val carContext: CarContext, private val lifecycle: 
                 else -> Follow.BROWSE
             },
             headingUp, s.tilt3d, top,
+            // The turn card column covers the left part: centre the position in the map right of it.
+            if (navigating) ((area?.left ?: 0) + (overlay?.panelWidthPx() ?: 0)).toDouble() else 0.0,
         )
     }
 
@@ -205,7 +213,7 @@ class CarMapRenderer(private val carContext: CarContext, private val lifecycle: 
         val pts = if (sn != null) n.route.line.remainder(sn.segment, sn.point) else n.route.points
         val area = visibleArea ?: android.graphics.Rect(0, 0, surfaceWidth, surfaceHeight)
         lastOverview = System.currentTimeMillis()
-        ctrl.showOverview(pts, area.left + 60, area.top + 40, (surfaceWidth - area.right) + 100, (surfaceHeight - area.bottom) + 40)
+        ctrl.showOverview(pts, area.left + (overlay?.panelWidthPx() ?: 0) + 40, area.top + 40, (surfaceWidth - area.right) + 100, (surfaceHeight - area.bottom) + 40)
     }
 
     /** View button: recentre after panning, otherwise Route oben → Norden oben → Übersicht. */
@@ -245,15 +253,7 @@ class CarMapRenderer(private val carContext: CarContext, private val lifecycle: 
 
     override fun onVisibleAreaChanged(visibleArea: Rect) {
         this.visibleArea = visibleArea
-        // Progress bar at the right edge of the free map area.
-        progress?.let { bar ->
-            val d = bar.resources.displayMetrics.density
-            val w = (CarProgressView.WIDTH_DP * CarProgressView.SCALE * d).toInt()
-            val lp = android.widget.FrameLayout.LayoutParams(w, (visibleArea.height() - 40 * d).toInt().coerceAtLeast(0))
-            lp.leftMargin = visibleArea.right - w - (10 * d).toInt()
-            lp.topMargin = visibleArea.top + (20 * d).toInt()
-            bar.layoutParams = lp
-        }
+        overlay?.setArea(visibleArea, surfaceWidth, surfaceHeight)
         applyFollow()
     }
 
@@ -272,16 +272,24 @@ class CarMapRenderer(private val carContext: CarContext, private val lifecycle: 
 
     private var framesRunning = false
     private var frameCount = 0
+    private var lastTick = 0L
+
+    /** One position/camera update; driven by the display frames, with a timer as fallback. */
+    private fun tick() {
+        val ctrl = controller ?: return
+        lastTick = android.os.SystemClock.uptimeMillis()
+        smoother.frame()?.let { ctrl.updateLocation(it) }
+        // The route start follows every second update – plenty, and cheaper.
+        if (frameCount++ % 2 == 0) smoother.alongOn(ctrl.activeLine)?.let { ctrl.setRouteProgress(it) }
+    }
+
     private val frameCallback = object : android.view.Choreographer.FrameCallback {
         override fun doFrame(frameTimeNanos: Long) {
-            val ctrl = controller
-            if (!framesRunning || ctrl == null) {
+            if (!framesRunning || controller == null) {
                 framesRunning = false
                 return
             }
-            smoother.frame()?.let { ctrl.updateLocation(it) }
-            // The route start follows every second frame (~30 Hz) – plenty, and cheaper.
-            if (frameCount++ % 2 == 0) smoother.alongOn(ctrl.activeLine)?.let { ctrl.setRouteProgress(it) }
+            tick()
             android.view.Choreographer.getInstance().postFrameCallback(this)
         }
     }
@@ -292,6 +300,17 @@ class CarMapRenderer(private val carContext: CarContext, private val lifecycle: 
         android.view.Choreographer.getInstance().postFrameCallback(frameCallback)
     }
 
+    /**
+     * Fallback when no display frames arrive (they come from the phone's display, which may be off
+     * while the phone lies in the car): keeps the position moving at ~25 updates per second.
+     */
+    private suspend fun frameWatchdog() {
+        while (true) {
+            kotlinx.coroutines.delay(40)
+            if (android.os.SystemClock.uptimeMillis() - lastTick > 80) tick()
+        }
+    }
+
     private fun release() {
         framesRunning = false
         android.view.Choreographer.getInstance().removeFrameCallback(frameCallback)
@@ -299,8 +318,8 @@ class CarMapRenderer(private val carContext: CarContext, private val lifecycle: 
         stateJob = null
         controller?.detach()
         controller = null
-        progress = null
-        icons = null
+        overlay?.dispose()
+        overlay = null
         mapView?.let {
             runCatching {
                 it.onPause()

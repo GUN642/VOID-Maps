@@ -223,6 +223,48 @@ class MapController(private val context: Context) {
         if (lc.isLocationComponentActivated) runCatching { lc.forceLocationUpdate(loc) }
     }
 
+    // ------------------------------------------------------------------ road snapping
+
+    private val roadLayers = arrayOf("road-minor", "road-tertiary", "road-secondary", "road-primary", "road-trunk", "road-motorway")
+
+    /**
+     * Moves a GPS fix onto the nearest road drawn on the map (within [maxMetres]), so the position
+     * does not float beside the street when no route is active. Unchanged when no road is near.
+     */
+    fun snapToRoad(loc: Location, maxMetres: Double = 14.0): Location {
+        val m = map ?: return loc
+        if (style == null) return loc
+        return runCatching {
+            val pt = m.projection.toScreenLocation(LatLng(loc.latitude, loc.longitude))
+            val r = 70f * context.resources.displayMetrics.density
+            val features = m.queryRenderedFeatures(android.graphics.RectF(pt.x - r, pt.y - r, pt.x + r, pt.y + r), *roadLayers)
+            val p = GeoPoint(loc.latitude, loc.longitude)
+            var best: GeoPoint? = null
+            var bestOffset = Double.MAX_VALUE
+            for (f in features) {
+                val g = f.geometry()
+                val lines: List<List<org.maplibre.geojson.Point>> = when (g) {
+                    is org.maplibre.geojson.LineString -> listOf(g.coordinates())
+                    is org.maplibre.geojson.MultiLineString -> g.coordinates()
+                    else -> emptyList()
+                }
+                for (coords in lines) {
+                    if (coords.size < 2) continue
+                    val snap = Polyline(coords.map { GeoPoint(it.latitude(), it.longitude()) }).snap(p) ?: continue
+                    if (snap.offset < bestOffset) {
+                        bestOffset = snap.offset
+                        best = snap.point
+                    }
+                }
+            }
+            val b = best
+            if (b == null || bestOffset > maxMetres) loc else Location(loc).apply {
+                latitude = b.lat
+                longitude = b.lon
+            }
+        }.getOrDefault(loc)
+    }
+
     // ------------------------------------------------------------------ camera
 
     fun setFollow(mode: Follow, headingUp: Boolean, tilt: Boolean, topPadding: Double, leftPadding: Double = 0.0) {

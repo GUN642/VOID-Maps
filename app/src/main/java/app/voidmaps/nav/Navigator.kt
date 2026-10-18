@@ -67,6 +67,8 @@ data class NavState(
     val nextStopTime: Double? = null,
     /** Lanes to use at the next junction, when the route has lane data. */
     val lanes: app.voidmaps.data.LaneSection? = null,
+    /** Driving against the route direction: "Bitte wenden". */
+    val turnAround: Boolean = false,
 ) {
     val eta: Long get() = System.currentTimeMillis() + (remainingTime * 1000).toLong()
 }
@@ -95,6 +97,9 @@ object Navigator {
     private var lastFasterCheck = 0L
     private var fasterDeclinedUntil = 0L
     private var arrivedAt = 0L
+    private var matchJob: Job? = null
+    private var wrongWaySince = 0L
+    private var turnAroundSpoken = false
 
     /** Stops the current route was calculated with, and how many of them are already behind us. */
     private var routeStops: List<Place> = emptyList()
@@ -126,6 +131,7 @@ object Navigator {
             speedKmh = 0,
         )
         lastFasterCheck = System.currentTimeMillis()
+        alignToMap(route)
         // May be refused when started from Android Auto with the phone app in the background;
         // guidance then still runs while the car session keeps the app alive.
         runCatching { ContextCompat.startForegroundService(app, Intent(app, NavigationService::class.java)) }
@@ -159,13 +165,15 @@ object Navigator {
     }
 
     fun stop() {
+        matchJob?.cancel()
         locationJob?.cancel()
         hazardJob?.cancel()
         locationJob = null
         hazardJob = null
         speaker?.stop()
         _state.value = null
-        appContext?.let { it.stopService(Intent(it, NavigationService::class.java)) }
+        // With Android Auto open the service keeps running for the position on the car map.
+        if (!NavigationService.carSession.value) appContext?.let { it.stopService(Intent(it, NavigationService::class.java)) }
     }
 
     /** Applies a new voice mode immediately (silences running speech when muted). */
@@ -208,6 +216,8 @@ object Navigator {
         lastReroute = 0L
         arrivedAt = 0L
         fasterDeclinedUntil = 0L
+        wrongWaySince = 0L
+        turnAroundSpoken = false
     }
 
     private fun firstRealManeuver(route: Route): Int {
@@ -225,6 +235,13 @@ object Navigator {
             it.configure(settings.voiceName, settings.speechRate)
             it.speak(text, interrupt)
         }
+    }
+
+    private fun angleDiff(a: Double, b: Double): Double {
+        var d = (a - b) % 360.0
+        if (d < -180) d += 360.0
+        if (d > 180) d -= 360.0
+        return kotlin.math.abs(d)
     }
 
     private fun heading(loc: Location): Double? = if (loc.hasBearing() && loc.speed > 2) loc.bearing.toDouble() else null
@@ -251,6 +268,28 @@ object Navigator {
         }
 
         val along = snap.along
+
+        // Driving against the route (e.g. navigation started in the wrong direction): "Bitte wenden",
+        // and if that lasts, a new route in the current driving direction.
+        val now = System.currentTimeMillis()
+        val routeBearing = Geo.bearing(route.line.pointAt(along), route.line.pointAt(along + 25))
+        val against = !offRoute && speed > 4 && loc.hasBearing() && snap.offset < tolerance &&
+            angleDiff(loc.bearing.toDouble(), routeBearing) > 130
+        if (against) {
+            if (wrongWaySince == 0L) wrongWaySince = now
+        } else {
+            wrongWaySince = 0L
+            turnAroundSpoken = false
+        }
+        val turnAround = against && now - wrongWaySince > 2_500
+        if (turnAround && !turnAroundSpoken) {
+            turnAroundSpoken = true
+            say(if (short) "Bitte wenden." else "Bitte wenden Sie, wenn möglich.", Say.GUIDE, interrupt = true)
+        }
+        if (turnAround && now - wrongWaySince > 12_000 && !s.rerouting && now - lastReroute > 20_000) {
+            wrongWaySince = now
+            recalculate(p, heading(loc), s.stops, announce = false)
+        }
 
         // Intermediate stops passed?
         var stopsLeft = s.stops
@@ -291,7 +330,8 @@ object Navigator {
             faster = faster,
             nextStopDistance = nextStopDistance,
             nextStopTime = nextStopTime,
-            lanes = route.lanesAt(along, if (speed > 22) 900.0 else 450.0),
+            lanes = if (turnAround) null else route.lanesAt(along, if (speed > 22) 900.0 else 450.0),
+            turnAround = turnAround,
         )
         _state.value = updated
 
@@ -300,7 +340,7 @@ object Navigator {
             say(if (short) "Ziel erreicht." else "Sie haben Ihr Ziel erreicht.", Say.INFO, interrupt = true)
             return
         }
-        if (!offRoute) {
+        if (!offRoute && !turnAround) {
             announceManeuver(updated, speed)
             announceWarning(warning, speed)
         }
@@ -470,6 +510,42 @@ object Navigator {
             routeHazards = projectHazards(r, HazardRepo.incidents.value + if (settings.speedCameras) HazardRepo.cameras.value else emptyList()),
         )
         VoidMapsApp.scope.launch { refreshHazards() }
+        alignToMap(r)
+    }
+
+    /**
+     * Moves the route onto the OpenStreetMap roads of the map in the background (see [RouteMatcher])
+     * and swaps it in while it is still the active route – first the part near the car, then all.
+     */
+    private fun alignToMap(route: Route) {
+        if (!app.voidmaps.data.RouteMatcher.needsMatching(route)) return
+        matchJob?.cancel()
+        matchJob = VoidMapsApp.scope.launch {
+            var current = route
+            val final = withContext(Dispatchers.IO) {
+                app.voidmaps.data.RouteMatcher.match(route) { partial ->
+                    VoidMapsApp.scope.launch {
+                        if (swapGeometry(current, partial)) current = partial
+                    }
+                }
+            }
+            if (final !== route) swapGeometry(current, final)
+        }
+    }
+
+    /** Replaces [old] by the same route on aligned geometry; false when [old] is no longer active. */
+    private fun swapGeometry(old: Route, new: Route): Boolean {
+        val cur = _state.value ?: return false
+        if (cur.route !== old || old === new) return false
+        _state.value = cur.copy(
+            route = new,
+            routeVersion = cur.routeVersion + 1,
+            snap = null,
+            routeHazards = projectHazards(new, HazardRepo.incidents.value + if (settings.speedCameras) HazardRepo.cameras.value else emptyList()),
+            faster = cur.faster,
+        )
+        LocationTracker.location.value?.let { onLocation(it) }
+        return true
     }
 
     /** With live traffic (TomTom) check every 3 minutes whether a clearly faster route exists, then offer it. */

@@ -14,6 +14,8 @@ import app.voidmaps.MainActivity
 import app.voidmaps.R
 import app.voidmaps.VoidMapsApp
 import app.voidmaps.data.Format
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 
 /** Keeps GPS and voice guidance running while the screen is off or another app is in front. */
@@ -31,9 +33,16 @@ class NavigationService : LifecycleService() {
         }
         LocationTracker.acquire(this, "nav")
         lifecycleScope.launch {
-            Navigator.state.collect { s ->
+            combine(Navigator.state, carSession) { s, car -> s to car }.collect { (s, car) ->
                 if (s == null) {
-                    stopSelf()
+                    if (!car) {
+                        stopSelf()
+                    } else if (lastText != CAR_TEXT) {
+                        // Android Auto open without a route: keeps the position on the car map up to date
+                        // even with the phone locked.
+                        lastText = CAR_TEXT
+                        getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, build("Android Auto", "Karte aktiv"))
+                    }
                     return@collect
                 }
                 val m = s.route.maneuvers.getOrNull(s.next)
@@ -91,6 +100,11 @@ class NavigationService : LifecycleService() {
     }
 
     companion object {
+        private const val CAR_TEXT = "car"
+
+        /** True while the Android Auto map is open; the service then also runs without a route. */
+        val carSession = MutableStateFlow(false)
+
         const val NOTIFICATION_ID = 42
         const val ACTION_STOP = "app.voidmaps.STOP_NAVIGATION"
     }

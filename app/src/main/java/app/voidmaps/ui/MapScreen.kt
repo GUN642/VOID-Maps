@@ -169,7 +169,8 @@ fun MapScreen(vm: MainViewModel, settings: AppSettings, design: Design, hasPermi
     val smoother = remember { app.voidmaps.nav.PuckSmoother() }
     LaunchedEffect(location, nav?.snap) {
         val loc = location ?: return@LaunchedEffect
-        smoother.onFix(loc, nav)
+        // Without a route the position is pulled onto the nearest road while driving.
+        smoother.onFix(if (nav == null && loc.speed > 3f) controller.snapToRoad(loc) else loc, nav)
     }
     LaunchedEffect(mapReady) {
         if (!mapReady) return@LaunchedEffect
@@ -269,7 +270,8 @@ fun MapScreen(vm: MainViewModel, settings: AppSettings, design: Design, hasPermi
             }
         }
         val preview = vm.preview
-        LaunchedEffect(mapReady, routes, vm.mode) {
+        // Keyed on the durations: aligning the routes to the map must not refit the camera.
+        LaunchedEffect(mapReady, routes.map { it.duration }, vm.mode) {
             if (mapReady && preview != null && vm.mode == Mode.PREVIEW) {
                 val all = routes.flatMap { it.points }
                 with(density) {

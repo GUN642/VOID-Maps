@@ -383,11 +383,28 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 routes = it.take(3)
                 selectedRoute = 0
                 if (routes.isNotEmpty() && mode == Mode.PREVIEW) autoStartAt = System.currentTimeMillis() + AUTO_START_MS
+                alignPreview(routes)
             }.onFailure { routeError = it.message ?: "Route konnte nicht berechnet werden" }
             // Warnings along the route are shown already in the preview.
             preview?.let { route ->
                 if (s.tomtomKey.isNotBlank()) HazardRepo.loadIncidents(s.tomtomKey, BBox.chunks(route.points, 9_000.0, 500.0, 20), replace = false)
                 if (s.speedCameras) HazardRepo.ensureCameras(HazardRepo.cellsFor(route.points), s.blitzerDe, s.mobileCameras)
+            }
+        }
+    }
+
+    private var alignJob: Job? = null
+
+    /** Aligns the preview routes to the roads of the map (fastest first) – see RouteMatcher. */
+    private fun alignPreview(list: List<Route>) {
+        alignJob?.cancel()
+        alignJob = viewModelScope.launch {
+            for (original in list) {
+                val aligned = withContext(Dispatchers.IO) { app.voidmaps.data.RouteMatcher.match(original) }
+                if (aligned === original) continue
+                val i = routes.indexOfFirst { it === original }
+                if (i < 0) return@launch
+                routes = routes.toMutableList().also { it[i] = aligned }
             }
         }
     }

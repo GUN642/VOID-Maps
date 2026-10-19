@@ -401,6 +401,7 @@ private fun BrowseOverlay(vm: MainViewModel, settings: AppSettings, hasPermissio
                 active = vm.following && hasPermission,
             )
         }
+        if (hasPermission) DrivingSpeed(Modifier.align(Alignment.BottomStart).navigationBarsPadding().padding(16.dp))
         if (!hasPermission) {
             Box(Modifier.align(Alignment.BottomStart).navigationBarsPadding().padding(start = 16.dp, bottom = 84.dp, end = 90.dp)) {
                 MapCard {

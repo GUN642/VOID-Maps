@@ -26,6 +26,7 @@ class VoidMapsApp : Application() {
         MapLibre.getInstance(this)
         repo = SettingsRepository(this)
         settings = repo.settings.stateIn(scope, SharingStarted.Eagerly, AppSettings())
+        app.voidmaps.nav.SpeedLimits.start()
         val nm = getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(
             NotificationChannel(NAV_CHANNEL, "Navigation", NotificationManager.IMPORTANCE_LOW).apply {

@@ -65,6 +65,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import app.voidmaps.data.AppSettings
 import app.voidmaps.data.Format
 import app.voidmaps.data.HazardType
@@ -142,7 +143,7 @@ fun NavigationOverlay(vm: MainViewModel, settings: AppSettings, s: NavState, onT
                 .onGloballyPositioned { bottomTop = it.boundsInRoot().top },
         ) {
             Row(verticalAlignment = Alignment.Bottom, modifier = Modifier.fillMaxWidth()) {
-                SpeedBubble(s.speedKmh)
+                SpeedCluster(s.speedKmh, s.speedLimit)
                 Spacer(Modifier.weight(1f))
                 if (!vm.following || settings.navView == NavView.OVERVIEW) {
                     MapButton(Icons.Outlined.MyLocation, "Zentrieren", onClick = {
@@ -241,7 +242,7 @@ private fun NavigationOverlayLandscape(vm: MainViewModel, settings: AppSettings,
                     vm.following = true
                 })
             }
-            SpeedBubble(s.speedKmh)
+            SpeedCluster(s.speedKmh, s.speedLimit)
         }
     }
 }
@@ -364,16 +365,47 @@ fun WarningBanner(type: HazardType, description: String, distance: Double) {
 }
 
 @Composable
-private fun SpeedBubble(kmh: Int) {
+private fun SpeedBubble(kmh: Int, limit: Int? = null) {
     val c = VoidTheme.colors
+    val tooFast = limit != null && kmh > limit + 3
     Box(
-        Modifier.size(72.dp).shadow(8.dp, CircleShape).clip(CircleShape).background(c.surface).border(1.dp, c.divider, CircleShape),
+        Modifier.size(72.dp).shadow(8.dp, CircleShape).clip(CircleShape).background(if (tooFast) c.accent else c.surface)
+            .border(1.dp, c.divider, CircleShape),
         contentAlignment = Alignment.Center,
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text("$kmh", style = dotNumber(26), color = c.text)
-            Label("km/h")
+            Text("$kmh", style = dotNumber(26), color = if (tooFast) c.onAccent else c.text)
+            Label("km/h", color = if (tooFast) c.onAccent else c.textMuted)
         }
+    }
+}
+
+/** Round speed limit sign as on the road: white disc, red ring, black number. */
+@Composable
+fun SpeedLimitSign(kmh: Int, size: androidx.compose.ui.unit.Dp = 64.dp) {
+    Box(
+        Modifier.size(size).shadow(8.dp, CircleShape).clip(CircleShape).background(Color.White)
+            .border(size * 0.11f, Color(0xFFD71921), CircleShape),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            "$kmh",
+            color = Color.Black,
+            fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+            fontSize = (size.value * if (kmh >= 100) 0.30f else 0.38f).sp,
+            maxLines = 1,
+        )
+    }
+}
+
+/** Current speed with the speed limit beside it (from the route, or looked up). */
+@Composable
+fun SpeedCluster(kmh: Int, routeLimit: Int?) {
+    val looked by app.voidmaps.nav.SpeedLimits.lookup.collectAsState()
+    val limit = routeLimit ?: looked
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        SpeedBubble(kmh, limit)
+        limit?.let { SpeedLimitSign(it) }
     }
 }
 
@@ -613,7 +645,7 @@ fun CarNavOverlay(s: NavState, settings: AppSettings) {
             verticalAlignment = Alignment.Bottom,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            SpeedBubble(s.speedKmh)
+            SpeedCluster(s.speedKmh, s.speedLimit)
             RouteProgressBar(s, settings, Modifier.width(52.dp).fillMaxHeight())
         }
     }
@@ -636,4 +668,14 @@ private fun CarStopBar(name: String, distance: Double, seconds: Double, count: I
             }
         }
     }
+}
+
+/** Without a route: speed and speed limit while driving (phone and Android Auto). */
+@Composable
+fun DrivingSpeed(modifier: Modifier = Modifier) {
+    val loc by app.voidmaps.nav.LocationTracker.location.collectAsState()
+    val looked by app.voidmaps.nav.SpeedLimits.lookup.collectAsState()
+    val kmh = ((loc?.speed ?: 0f) * 3.6f).toInt()
+    if (kmh < 5 && looked == null) return
+    Box(modifier) { SpeedCluster(kmh, null) }
 }

@@ -69,6 +69,8 @@ data class NavState(
     val lanes: app.voidmaps.data.LaneSection? = null,
     /** Driving against the route direction: "Bitte wenden". */
     val turnAround: Boolean = false,
+    /** Signposted speed limit here, when the route knows it (TomTom). */
+    val speedLimit: Int? = null,
 ) {
     val eta: Long get() = System.currentTimeMillis() + (remainingTime * 1000).toLong()
 }
@@ -332,6 +334,7 @@ object Navigator {
             nextStopTime = nextStopTime,
             lanes = if (turnAround) null else route.lanesAt(along, if (speed > 22) 900.0 else 450.0),
             turnAround = turnAround,
+            speedLimit = route.speedLimitAt(along),
         )
         _state.value = updated
 

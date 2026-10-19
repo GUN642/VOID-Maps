@@ -15,11 +15,18 @@ import org.json.JSONObject
  */
 object RouteMatcher {
     private const val URL = "https://valhalla1.openstreetmap.de/trace_attributes"
-    private const val CHUNK_POINTS = 400
-    private const val CHUNK_METRES = 25_000.0
+    private const val CHUNK_POINTS = 150
+    private const val CHUNK_METRES = 8_000.0
 
     /** Max. distance between a TomTom point and its matched OSM position. */
-    private const val MAX_SHIFT = 22.0
+    private const val MAX_SHIFT = 30.0
+
+    @Volatile private var goodPoints = 0
+    @Volatile private var totalPoints = 0
+    @Volatile private var lastError: String? = null
+
+    /** Result of the last alignment, shown in the settings (helps when routes still look off). */
+    val status = kotlinx.coroutines.flow.MutableStateFlow("Noch keine Route ausgerichtet")
 
     fun needsMatching(r: Route) = !r.matched && r.engine != "Valhalla" && r.points.size >= 2
 
@@ -38,11 +45,20 @@ object RouteMatcher {
         map[0] = 0
         var start = 0
         var anyMatched = false
+        var chunks = 0
+        var matchedChunks = 0
+        goodPoints = 0
+        totalPoints = 0
+        lastError = null
         var partialSent = false
         while (start < pts.size - 1) {
             var end = start + 1
             while (end < pts.size - 1 && end - start < CHUNK_POINTS && cum[end] - cum[start] < CHUNK_METRES) end++
-            val piece = runCatching { matchChunk(pts.subList(start, end + 1)) }.getOrNull()
+            val piece = runCatching { matchChunk(pts.subList(start, end + 1)) }
+                .onFailure { e -> lastError = (e as? HttpException)?.let { "HTTP ${it.code} ${it.body.take(80)}" } ?: e.message ?: e.javaClass.simpleName }
+                .getOrNull()
+            chunks++
+            if (piece != null) matchedChunks++
             if (piece != null) {
                 anyMatched = true
                 if (start == 0) out[0] = piece.points[0]
@@ -61,6 +77,12 @@ object RouteMatcher {
                 partialSent = true
                 onPartial(assemble(route, out, map, start))
             }
+        }
+        status.value = when {
+            matchedChunks == 0 -> "Ausrichtung fehlgeschlagen" + (lastError?.let { ": $it" } ?: "")
+            else -> "Route ausgerichtet: $matchedChunks von $chunks Abschnitten, " +
+                "${goodPoints * 100 / totalPoints.coerceAtLeast(1)} % der Punkte auf OSM-Straßen" +
+                (lastError?.let { " (Fehler: $it)" } ?: "")
         }
         if (!anyMatched) return route
         return runCatching { route.withGeometry(out, map) }.getOrDefault(route)
@@ -87,7 +109,7 @@ object RouteMatcher {
             .put("shape", shape)
             .put("costing", "auto")
             .put("shape_match", "map_snap")
-            .put("trace_options", JSONObject().put("search_radius", 30))
+            .put("trace_options", JSONObject().put("search_radius", 35).put("gps_accuracy", 10).put("breakage_distance", 5000))
             .put(
                 "filters",
                 JSONObject().put("action", "include").put(
@@ -105,50 +127,59 @@ object RouteMatcher {
         return pieceFrom(chunk, json)
     }
 
-    /** Builds the aligned piece from a trace_attributes answer (separate for tests). */
+    /**
+     * Builds the aligned piece from a trace_attributes answer (separate for tests). Points that
+     * could not be matched keep their position; OSM curve points are only added between two
+     * neighbouring points that were both matched plausibly. Null when too little matched.
+     */
     internal fun pieceFrom(chunk: List<GeoPoint>, json: JSONObject): Piece? {
         val shapePts = Geo.decodePolyline(json.optString("shape"), 6)
-        if (shapePts.size < 2) return null
+        val edges = json.optJSONArray("edges")
+        val matched = json.optJSONArray("matched_points") ?: return null
+        if (matched.length() != chunk.size || shapePts.size < 2 || edges == null) return null
         val shapeLine = Polyline(shapePts)
         val sc = shapeLine.cumulative
-        val edges = json.optJSONArray("edges") ?: return null
-        val matched = json.optJSONArray("matched_points") ?: return null
-        if (matched.length() != chunk.size) return null
-
-        // Position of every matched point along the matched shape.
-        val along = DoubleArray(chunk.size)
         val origLine = Polyline(chunk)
+
+        // Position of every matched point along the matched shape; NaN = keep the original point.
+        val along = DoubleArray(chunk.size) { Double.NaN }
+        var lastGood = -1
         for (i in chunk.indices) {
             val mp = matched.getJSONObject(i)
-            if (mp.optString("type") == "unmatched") return null
-            if (mp.optDouble("distance_from_trace_point", 0.0) > MAX_SHIFT) return null
-            val edge = edges.optJSONObject(mp.optInt("edge_index", -1)) ?: return null
+            if (mp.optString("type") == "unmatched") continue
+            if (mp.optDouble("distance_from_trace_point", 0.0) > MAX_SHIFT) continue
+            val edge = edges.optJSONObject(mp.optInt("edge_index", -1)) ?: continue
             val b = edge.optInt("begin_shape_index").coerceIn(0, shapePts.size - 1)
             val e = edge.optInt("end_shape_index").coerceIn(0, shapePts.size - 1)
             val f = mp.optDouble("distance_along_edge", 0.0).coerceIn(0.0, 1.0)
-            along[i] = sc[b] + (sc[e] - sc[b]) * f
-            if (i > 0) {
-                val step = along[i] - along[i - 1]
-                val orig = origLine.cumulative[i] - origLine.cumulative[i - 1]
-                // Backwards or a detour the original does not make: not reliable.
-                if (step < -2.0 || step > orig * 1.5 + 30) return null
-                if (step < 0) along[i] = along[i - 1]
+            val a = sc[b] + (sc[e] - sc[b]) * f
+            if (lastGood >= 0) {
+                val step = a - along[lastGood]
+                val orig = origLine.cumulative[i] - origLine.cumulative[lastGood]
+                // Backwards or a detour the original does not make: not reliable for this point.
+                if (step < -3.0 || step > orig * 1.5 + 40) continue
             }
+            along[i] = if (lastGood >= 0) maxOf(a, along[lastGood]) else a
+            lastGood = i
         }
+        val good = along.count { !it.isNaN() }
+        if (good < chunk.size * 0.5) return null
+        goodPoints += good
+        totalPoints += chunk.size
 
-        // New points: each matched point, plus the OSM shape points between it and the next one.
         val out = ArrayList<GeoPoint>(shapePts.size + chunk.size)
         val index = IntArray(chunk.size)
         var s = 0
         for (i in chunk.indices) {
             index[i] = out.size
-            out += shapeLine.pointAt(along[i])
-            if (i < chunk.size - 1) {
-                while (s < shapePts.size && sc[s] <= along[i] + 0.3) s++
-                while (s < shapePts.size && sc[s] < along[i + 1] - 0.3) {
-                    out += shapePts[s]
-                    s++
-                }
+            val ai = along[i]
+            out += if (ai.isNaN()) chunk[i] else shapeLine.pointAt(ai)
+            val next = along.getOrNull(i + 1) ?: continue
+            if (ai.isNaN() || next.isNaN()) continue
+            while (s < shapePts.size && sc[s] <= ai + 0.3) s++
+            while (s < shapePts.size && sc[s] < next - 0.3) {
+                out += shapePts[s]
+                s++
             }
         }
         return Piece(out, index)

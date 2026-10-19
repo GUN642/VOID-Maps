@@ -51,6 +51,8 @@ class Route(
     private val trafficIndices: List<IntArray> = emptyList(),
     /** True once the geometry was aligned to the OpenStreetMap roads of the map ([RouteMatcher]). */
     val matched: Boolean = false,
+    /** Speed limits as point indices (TomTom): start, end, km/h. */
+    private val speedLimitIndices: List<IntArray> = emptyList(),
 ) {
     val line = Polyline(points)
     val distance: Double get() = line.length
@@ -63,6 +65,13 @@ class Route(
             t[2], t[3] == 1, t[4],
         )
     }
+
+    private val speedLimitAlong: List<Triple<Double, Double, Int>> = speedLimitIndices.map {
+        Triple(line.cumulative[it[0].coerceIn(0, points.size - 1)], line.cumulative[it[1].coerceIn(0, points.size - 1)], it[2])
+    }
+
+    /** Signposted speed limit at [along] metres, when the routing knows it. */
+    fun speedLimitAt(along: Double): Int? = speedLimitAlong.firstOrNull { along >= it.first - 1 && along < it.second + 1 }?.third
 
     /** Start and end (metres along the route) of each lane section. */
     val laneAlong: List<Pair<Double, Double>> = laneSections.map {
@@ -132,6 +141,7 @@ class Route(
             laneSections.map { it.copy(startIndex = m(it.startIndex), endIndex = m(it.endIndex)) },
             trafficIndices.map { intArrayOf(m(it[0]), m(it[1]), it[2], it[3], it[4]) },
             matched = true,
+            speedLimitIndices = speedLimitIndices.map { intArrayOf(m(it[0]), m(it[1]), it[2]) },
         )
     }
 
@@ -350,12 +360,17 @@ object Routing {
             .append("?key=").append(Http.enc(key))
             .append("&traffic=true&travelMode=car&routeType=fastest&instructionsType=text&language=de-DE")
         if (alternatives > 0) sb.append("&maxAlternatives=").append(alternatives)
-        sb.append("&sectionType=lanes&sectionType=traffic")
+        sb.append("&sectionType=lanes&sectionType=traffic&sectionType=speedLimit")
         options.heading?.let { sb.append("&vehicleHeading=").append(it.toInt().coerceIn(0, 359)) }
         if (options.avoidTolls) sb.append("&avoid=tollRoads")
         if (options.avoidMotorways) sb.append("&avoid=motorways")
         val text = try {
-            Http.get(sb.toString())
+            try {
+                Http.get(sb.toString())
+            } catch (e: HttpException) {
+                // Speed limit sections are newer – never let them cost the route.
+                if (e.code == 400) Http.get(sb.toString().replace("&sectionType=speedLimit", "")) else throw e
+            }
         } catch (e: HttpException) {
             throw RoutingException(
                 when (e.code) {
@@ -413,7 +428,21 @@ object Routing {
             waypoints,
             parseLanes(route.optJSONArray("sections"), points.size),
             parseTraffic(route.optJSONArray("sections"), points.size),
+            speedLimitIndices = parseSpeedLimits(route.optJSONArray("sections"), points.size),
         )
+    }
+
+    private fun parseSpeedLimits(sections: JSONArray?, size: Int): List<IntArray> {
+        if (sections == null) return emptyList()
+        val out = ArrayList<IntArray>()
+        for (i in 0 until sections.length()) {
+            val sec = sections.getJSONObject(i)
+            if (!sec.optString("sectionType").equals("SPEED_LIMIT", ignoreCase = true)) continue
+            val kmh = sec.optDouble("maxSpeedLimitInKmh", 0.0).toInt()
+            if (kmh <= 0) continue
+            out += intArrayOf(sec.optInt("startPointIndex").coerceIn(0, size - 1), sec.optInt("endPointIndex").coerceIn(0, size - 1), kmh)
+        }
+        return out
     }
 
     private fun parseTraffic(sections: JSONArray?, size: Int): List<IntArray> {

@@ -139,9 +139,13 @@ fun SettingsScreen(vm: MainViewModel, s: AppSettings, onBack: () -> Unit) {
             }
             Spacer(Modifier.height(6.dp))
             Text(
-                "Automatisch: TomTom mit Live-Verkehr, wenn ein Schlüssel hinterlegt ist, sonst Valhalla auf OpenStreetMap-Daten.",
+                "Automatisch: TomTom mit Live-Verkehr, wenn ein Schlüssel hinterlegt ist, sonst Valhalla auf OpenStreetMap-Daten. " +
+                    "TomTom-Routen werden auf die Straßen der Karte ausgerichtet.",
                 color = c.textMuted, style = MaterialTheme.typography.bodyMedium,
             )
+            val alignStatus by app.voidmaps.data.RouteMatcher.status.collectAsState()
+            Spacer(Modifier.height(4.dp))
+            Label(alignStatus)
 
             Group("Verkehr · TomTom")
             KeyField(s.tomtomKeyInput) { vm.setTomTomKey(it) }

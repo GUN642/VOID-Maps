@@ -63,7 +63,11 @@ class CarOverlay(context: Context, private val carContext: CarContext) {
                             bottom = (((if (h > 0 && a != null) h - a.bottom else 0)) / d).dp,
                         ),
                     ) {
-                        if (s != null) CarNavOverlay(s, settings)
+                        if (s != null) {
+                            CarNavOverlay(s, settings)
+                        } else {
+                            app.voidmaps.ui.DrivingSpeed(Modifier.align(androidx.compose.ui.Alignment.BottomEnd).padding(12.dp))
+                        }
                     }
                 }
             }

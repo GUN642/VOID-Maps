@@ -159,6 +159,10 @@ class MapController(private val context: Context) {
             .pulseEnabled(false)
             .elevation(0f)
             .trackingGesturesManagement(true)
+            // No animation of its own: we feed an already smoothed position every frame. With the
+            // built-in animation each new position restarted the animation before it could move,
+            // and the puck trailed behind the route by a second or more.
+            .trackingAnimationDurationMultiplier(0f)
             .build()
         val lc = m.locationComponent
         runCatching {

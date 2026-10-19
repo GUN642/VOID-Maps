@@ -165,7 +165,7 @@ fun MapScreen(vm: MainViewModel, settings: AppSettings, design: Design, hasPermi
     val location by LocationTracker.location.collectAsState()
     val nav by Navigator.state.collectAsState()
 
-    // Position puck: GPS fixes are smoothed to ~20 updates per second (along the route while navigating).
+    // Position puck: GPS fixes are smoothed to one update per frame (along the route while navigating).
     val smoother = remember { app.voidmaps.nav.PuckSmoother() }
     LaunchedEffect(location, nav?.snap) {
         val loc = location ?: return@LaunchedEffect
@@ -174,10 +174,12 @@ fun MapScreen(vm: MainViewModel, settings: AppSettings, design: Design, hasPermi
     }
     LaunchedEffect(mapReady) {
         if (!mapReady) return@LaunchedEffect
+        // One update per display frame: the puck has no animation of its own any more.
+        var n = 0
         while (true) {
+            androidx.compose.runtime.withFrameNanos { }
             smoother.frame()?.let { controller.updateLocation(it) }
-            smoother.alongOn(controller.activeLine)?.let { controller.setRouteProgress(it) }
-            delay(50)
+            if (n++ % 2 == 0) smoother.alongOn(controller.activeLine)?.let { controller.setRouteProgress(it) }
         }
     }
 

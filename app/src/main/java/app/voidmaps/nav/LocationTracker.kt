@@ -80,7 +80,9 @@ object LocationTracker {
             LocationManager.NETWORK_PROVIDER
         }
         runCatching {
-            if (secondary in providers) lm.requestLocationUpdates(secondary, 2000L, 0f, listener, Looper.getMainLooper())
+            if (secondary in providers) {
+                lm.requestLocationUpdates(secondary, if (secondary == LocationManager.FUSED_PROVIDER) 500L else 2000L, 0f, listener, Looper.getMainLooper())
+            }
         }
         running = true
         if (_location.value == null) {
@@ -108,8 +110,8 @@ object LocationTracker {
         val now = System.currentTimeMillis()
         if (loc.provider == LocationManager.GPS_PROVIDER) {
             lastGpsAt = now
-        } else if (now - lastGpsAt < 5000) {
-            return // GPS is delivering – ignore the coarser fixes.
+        } else if (now - lastGpsAt < 5000 && (!loc.hasAccuracy() || loc.accuracy > 12f)) {
+            return // GPS is delivering – ignore coarser fixes (precise fused ones, e.g. from the car, are fine).
         }
         val fixed = if (loc.hasBearing() && loc.speed > 1.5f) {
             lastBearing = loc.bearing

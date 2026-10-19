@@ -84,6 +84,16 @@ class CarOverlay(context: Context, private val carContext: CarContext) {
     /** Width of the turn card column in surface pixels. */
     fun panelWidthPx(): Int = (CAR_PANEL.value * density * scale(density)).toInt()
 
+    /**
+     * Compose looks for the lifecycle on the window's root view, not on the ComposeView itself –
+     * a Presentation has none, so the owners go onto every root that can hold the view.
+     */
+    fun attachOwners(root: android.view.View?) {
+        root ?: return
+        root.setViewTreeLifecycleOwner(owner)
+        root.setViewTreeSavedStateRegistryOwner(owner)
+    }
+
     /** Free map area (without Android Auto's own buttons and cards) in surface pixels. */
     fun setArea(visible: Rect, width: Int, height: Int) {
         area.value = Rect(visible)

@@ -99,7 +99,10 @@ class CarMapRenderer(private val carContext: CarContext, private val lifecycle: 
         overlay = ov
         surfaceWidth = surfaceContainer.width
         surfaceHeight = surfaceContainer.height
+        ov.attachOwners(root)
         pres.setContentView(root)
+        ov.attachOwners(pres.window?.decorView)
+        ov.attachOwners(root.rootView)
         visibleArea?.let { area -> root.post { onVisibleAreaChanged(area) } }
         pres.show()
         mv.onCreate(null)

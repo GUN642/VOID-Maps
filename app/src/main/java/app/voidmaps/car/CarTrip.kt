@@ -71,10 +71,14 @@ object CarTrip {
         return b.build()
     }
 
+    /**
+     * Display distance already rounded to what the unit shows. Unrounded values (e.g. 36.27 km) were
+     * shown by some cars without the decimal separator – "3627 km" instead of "36 km".
+     */
     fun distance(m: Double): Distance = when {
         m < 1000 -> Distance.create(((m / 10).toInt() * 10).toDouble().coerceAtLeast(0.0), Distance.UNIT_METERS)
-        m < 10_000 -> Distance.create(m / 1000, Distance.UNIT_KILOMETERS_P1)
-        else -> Distance.create(m / 1000, Distance.UNIT_KILOMETERS)
+        m < 10_000 -> Distance.create(Math.round(m / 100) / 10.0, Distance.UNIT_KILOMETERS_P1)
+        else -> Distance.create(Math.round(m / 1000).toDouble(), Distance.UNIT_KILOMETERS)
     }
 
     private fun maneuver(kind: ManeuverKind, exit: Int?): Maneuver {

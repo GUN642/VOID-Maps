@@ -483,6 +483,13 @@ class MapController(private val context: Context) {
         push(MapStyle.ROUTE_TRAFFIC, routeTrafficJson)
     }
 
+    private var lampJson: String = EMPTY
+
+    fun setLamps(points: List<GeoPoint>) {
+        lampJson = featureCollection(points.map { pointFeature(it, JSONObject()) })
+        push(MapStyle.LAMPS, lampJson)
+    }
+
     fun setSignals(points: List<GeoPoint>) {
         signalJson = featureCollection(points.map { pointFeature(it, JSONObject()) })
         push(MapStyle.SIGNALS, signalJson)
@@ -541,6 +548,7 @@ class MapController(private val context: Context) {
         push(MapStyle.DEST, destJson)
         push(MapStyle.POIS, poiJson)
         push(MapStyle.SIGNALS, signalJson)
+        push(MapStyle.LAMPS, lampJson)
         push(MapStyle.ROUTE_TRAFFIC, routeTrafficJson)
         push(MapStyle.ROUTE_HEAD, headJson)
     }

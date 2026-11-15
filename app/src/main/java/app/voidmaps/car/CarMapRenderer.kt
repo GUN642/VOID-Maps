@@ -184,6 +184,24 @@ class CarMapRenderer(private val carContext: CarContext, private val lifecycle: 
                 combine(HazardRepo.incidents, HazardRepo.cameras, VoidMapsApp.settings) { a, b, s -> a + if (s.speedCameras) b else emptyList() }
                     .collect { ctrl.setHazards(it) }
             }
+            // Traffic lights and street lamps around the position, as on the phone.
+            launch {
+                combine(HazardRepo.signals, VoidMapsApp.settings) { list, s -> if (s.trafficSignals) list else emptyList() }
+                    .collect { ctrl.setSignals(it) }
+            }
+            launch {
+                combine(HazardRepo.lamps, VoidMapsApp.settings) { list, s -> if (s.streetLamps) list else emptyList() }
+                    .collect { ctrl.setLamps(it) }
+            }
+            launch {
+                LocationTracker.location.collect { loc ->
+                    if (loc == null) return@collect
+                    val p = app.voidmaps.data.GeoPoint(loc.latitude, loc.longitude)
+                    val s = VoidMapsApp.settings.value
+                    if (s.trafficSignals) HazardRepo.loadSignals(p)
+                    if (s.streetLamps && loc.speed < 20f) HazardRepo.loadLamps(p)
+                }
+            }
         }
     }
 

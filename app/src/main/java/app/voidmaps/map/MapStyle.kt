@@ -154,6 +154,7 @@ object MapStyle {
     const val ROUTE_TRAFFIC = "route-traffic"
     const val ROUTE_HEAD = "route-head"
     const val SIGNALS = "signals"
+    const val LAMPS = "lamps"
     const val LABEL_ANCHOR = "place-village"
 
     private const val TILES = "https://tiles.openfreemap.org/planet"
@@ -186,6 +187,7 @@ object MapStyle {
             ROUTE_TRAFFIC to mapOf("type" to "geojson", "data" to EMPTY),
             ROUTE_HEAD to mapOf("type" to "geojson", "data" to EMPTY),
             SIGNALS to mapOf("type" to "geojson", "data" to EMPTY),
+            LAMPS to mapOf("type" to "geojson", "data" to EMPTY),
         )
         if (c.satellite) {
             // Esri World Imagery by default (in Germany largely recent official aerial photos), TomTom on request.
@@ -339,12 +341,40 @@ object MapStyle {
             "paint" to mapOf("line-color" to p.boundary, "line-width" to zoomExp(3, 0.6, 10, 1.4), "line-dasharray" to listOf(1, 2)),
         )
 
+        // Street lamps: small dots on the ground, with a soft glow in the dark design.
+        if (p.dark) {
+            layers += mapOf(
+                "id" to "lamp-glow", "type" to "circle", "source" to LAMPS, "minzoom" to 15,
+                "paint" to mapOf(
+                    "circle-color" to "#FFC66B",
+                    "circle-radius" to zoomExp(15, 4, 18, 14),
+                    "circle-blur" to 1,
+                    "circle-opacity" to 0.28,
+                    "circle-pitch-alignment" to "map",
+                ),
+            )
+        }
+        layers += mapOf(
+            "id" to "lamp-dot", "type" to "circle", "source" to LAMPS, "minzoom" to 15,
+            "paint" to mapOf(
+                "circle-color" to if (p.dark) "#FFE2A8" else "#9A9A92",
+                "circle-radius" to zoomExp(15, 1.2, 18, 3.2),
+                "circle-pitch-alignment" to "map",
+            ),
+        )
+
         if (c.buildings3d && !c.satellite) {
+            // Taller buildings a little lighter (dark design) or darker (light design) for depth;
+            // outlines that consist of separate building parts are hidden (hide_3d), so the parts
+            // show their own heights.
+            val tall = if (p.dark) "#4A4A4A" else "#CFCEC8"
+            val height = listOf("coalesce", listOf("get", "render_height"), 6)
             layers += mapOf(
                 "id" to "building-3d", "type" to "fill-extrusion", "source" to "omt", "source-layer" to "building", "minzoom" to 14,
-                "filter" to isPolygon,
+                "filter" to listOf("all", isPolygon, listOf("!=", listOf("get", "hide_3d"), true)),
                 "paint" to mapOf(
-                    "fill-extrusion-color" to p.building3d,
+                    "fill-extrusion-color" to listOf("interpolate", listOf("linear"), height, 0, p.building3d, 40, tall),
+                    "fill-extrusion-vertical-gradient" to true,
                     "fill-extrusion-height" to listOf("interpolate", listOf("linear"), listOf("zoom"), 14, 0, 15, listOf("coalesce", listOf("get", "render_height"), 6)),
                     "fill-extrusion-base" to listOf("coalesce", listOf("get", "render_min_height"), 0),
                     "fill-extrusion-opacity" to 0.88,
@@ -475,6 +505,8 @@ object MapStyle {
             "version" to 8,
             "name" to "VOID",
             "glyphs" to GLYPHS,
+            // Light from the south-west, a bit stronger: walls facing away get darker – more plastic 3D.
+            "light" to mapOf("anchor" to "map", "color" to "#FFFFFF", "intensity" to if (p.dark) 0.55 else 0.4, "position" to listOf(1.3, 210, 35)),
             "sources" to sources,
             "layers" to layers,
         )

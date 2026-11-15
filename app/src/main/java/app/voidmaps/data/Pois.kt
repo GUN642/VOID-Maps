@@ -194,6 +194,13 @@ object Pois {
         return (0 until arr.length()).mapNotNull { i -> point(arr.getJSONObject(i)) }
     }
 
+    /** Street lamps (highway=street_lamp) inside [box] – many in towns, so keep the box small. */
+    fun streetLamps(box: BBox): List<GeoPoint> {
+        val q = "[out:json][timeout:20];node[\"highway\"=\"street_lamp\"](${box.minLat},${box.minLon},${box.maxLat},${box.maxLon});out skel 4000;"
+        val arr = query(q).optJSONArray("elements") ?: return emptyList()
+        return (0 until arr.length()).mapNotNull { i -> point(arr.getJSONObject(i)) }
+    }
+
     private fun point(e: JSONObject): GeoPoint? {
         if (e.has("lat")) return GeoPoint(e.getDouble("lat"), e.getDouble("lon"))
         val c = e.optJSONObject("center") ?: return null

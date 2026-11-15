@@ -42,6 +42,9 @@ object HazardRepo {
     private val _signals = MutableStateFlow<List<GeoPoint>>(emptyList())
     val signals: StateFlow<List<GeoPoint>> = _signals.asStateFlow()
     private val signalAreas = ArrayList<BBox>()
+    private val lampAreas = ArrayList<BBox>()
+    private val _lamps = MutableStateFlow<List<GeoPoint>>(emptyList())
+    val lamps: StateFlow<List<GeoPoint>> = _lamps.asStateFlow()
 
     private var lastViewFetch = 0L
     private var lastViewCenter: GeoPoint? = null
@@ -270,6 +273,25 @@ object HazardRepo {
         }
         _signals.value = (_signals.value + list).distinct().takeLast(6000)
         if (signalAreas.size > 40) signalAreas.removeAt(0)
+    }
+
+    /** Street lamps around [center] (~1.2 km); areas already loaded are not fetched again. */
+    suspend fun loadLamps(center: GeoPoint) {
+        if (lampAreas.any { it.expand(-400.0).contains(center) }) return
+        val box = BBox.around(center, 1_200.0)
+        lampAreas += box
+        val list = withContext(Dispatchers.IO) { runCatching { Pois.streetLamps(box) }.getOrNull() }
+        if (list == null) {
+            lampAreas.remove(box)
+            return
+        }
+        _lamps.value = (_lamps.value + list).distinct().takeLast(12_000)
+        if (lampAreas.size > 30) lampAreas.removeAt(0)
+    }
+
+    fun clearLamps() {
+        _lamps.value = emptyList()
+        lampAreas.clear()
     }
 
     fun clearSignals() {

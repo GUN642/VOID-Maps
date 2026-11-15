@@ -110,6 +110,7 @@ fun SettingsScreen(vm: MainViewModel, s: AppSettings, onBack: () -> Unit) {
             Toggle("3D-Gebäude", "Gebäude mit Höhe, sichtbar beim Neigen der Karte", s.buildings3d) { v -> vm.update { setBuildings3d(v) } }
             Toggle("Gelände-Relief", "Berge und Täler plastisch schattiert", s.terrain) { v -> vm.update { setTerrain(v) } }
             Toggle("Ampeln", "Ampeln aus OpenStreetMap ab Straßenzoom", s.trafficSignals) { v -> vm.setTrafficSignals(v) }
+            Toggle("Laternen", "Straßenlaternen aus OpenStreetMap als leuchtende Punkte, ab Straßenzoom", s.streetLamps) { v -> vm.setStreetLamps(v) }
 
             Group("Navigation")
             Label("Sprachansagen")

@@ -70,6 +70,8 @@ data class AppSettings(
     /** Relief shading from elevation data (MapLibre Native has no true 3D terrain yet). */
     val terrain: Boolean = true,
     val trafficSignals: Boolean = true,
+    /** Street lamps from OpenStreetMap as small glowing dots. */
+    val streetLamps: Boolean = true,
     val chargerOperators: Set<ChargeOperator> = ChargeOperator.entries.toSet(),
     val tomtomKeyInput: String = "",
     val autoUpdateCheck: Boolean = true,
@@ -115,6 +117,7 @@ class SettingsRepository(private val context: Context) {
         val buildings3d = booleanPreferencesKey("buildings3d")
         val terrain = booleanPreferencesKey("terrain")
         val signals = booleanPreferencesKey("traffic_signals")
+        val lamps = booleanPreferencesKey("street_lamps")
         val chargerOperators = stringPreferencesKey("charger_operators")
         val tomtomKey = stringPreferencesKey("tomtom_key")
         val autoUpdate = booleanPreferencesKey("auto_update")
@@ -158,6 +161,7 @@ class SettingsRepository(private val context: Context) {
             buildings3d = p[K.buildings3d] ?: d.buildings3d,
             terrain = p[K.terrain] ?: d.terrain,
             trafficSignals = p[K.signals] ?: d.trafficSignals,
+            streetLamps = p[K.lamps] ?: d.streetLamps,
             chargerOperators = p[K.chargerOperators]?.split(',')
                 ?.mapNotNull { v -> ChargeOperator.entries.firstOrNull { it.name == v } }?.toSet()
                 ?: d.chargerOperators,
@@ -197,6 +201,7 @@ class SettingsRepository(private val context: Context) {
     suspend fun setBuildings3d(v: Boolean) = context.dataStore.edit { it[K.buildings3d] = v }
     suspend fun setTerrain(v: Boolean) = context.dataStore.edit { it[K.terrain] = v }
     suspend fun setTrafficSignals(v: Boolean) = context.dataStore.edit { it[K.signals] = v }
+    suspend fun setStreetLamps(v: Boolean) = context.dataStore.edit { it[K.lamps] = v }
     suspend fun setChargerOperators(v: Set<ChargeOperator>) =
         context.dataStore.edit { it[K.chargerOperators] = v.joinToString(",") { o -> o.name } }
     suspend fun setTomTomKey(v: String) = context.dataStore.edit { it[K.tomtomKey] = v.trim() }

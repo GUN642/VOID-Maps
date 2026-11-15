@@ -171,6 +171,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 if (loc != null && settings.value.trafficSignals && (mode == Mode.NAVIGATE || following)) {
                     HazardRepo.loadSignals(GeoPoint(loc.latitude, loc.longitude))
                 }
+                // Lamps only in town speeds: on the motorway they are rare and would cost many queries.
+                if (loc != null && loc.speed < 20f && settings.value.streetLamps && (mode == Mode.NAVIGATE || following)) {
+                    HazardRepo.loadLamps(GeoPoint(loc.latitude, loc.longitude))
+                }
             }
         }
         OfflineMaps.refresh(app)
@@ -563,6 +567,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (s.trafficSignals && zoom >= 14) {
             viewModelScope.launch { HazardRepo.loadSignals(center) }
         }
+        if (s.streetLamps && zoom >= 15) {
+            viewModelScope.launch { HazardRepo.loadLamps(center) }
+        }
         if (s.chargers) {
             viewModelScope.launch { HazardRepo.ensureChargers(HazardRepo.cellsFor(box), s.chargerOperators) }
         }
@@ -630,6 +637,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun toggleSatellite() {
         val on = !settings.value.satellite
         update { setSatellite(on) }
+    }
+
+    fun setStreetLamps(on: Boolean) {
+        update { this.setStreetLamps(on) }
+        if (!on) HazardRepo.clearLamps()
     }
 
     fun setTrafficSignals(on: Boolean) {

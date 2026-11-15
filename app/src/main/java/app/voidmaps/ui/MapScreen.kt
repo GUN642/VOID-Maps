@@ -235,6 +235,10 @@ fun MapScreen(vm: MainViewModel, settings: AppSettings, design: Design, hasPermi
     LaunchedEffect(mapReady, signals, settings.trafficSignals) {
         if (mapReady) controller.setSignals(if (settings.trafficSignals) signals else emptyList())
     }
+    val lamps by HazardRepo.lamps.collectAsState()
+    LaunchedEffect(mapReady, lamps, settings.streetLamps) {
+        if (mapReady) controller.setLamps(if (settings.streetLamps) lamps else emptyList())
+    }
     LaunchedEffect(mapReady, chargers, settings.chargers, settings.chargerOperators) {
         if (mapReady) controller.setPois(if (settings.chargers) chargers.filter { it.operator in settings.chargerOperators } else emptyList())
     }

@@ -169,6 +169,24 @@ object Pois {
         return out.distinctBy { it.id }.sortedBy { Geo.distance(center, it.point) }.take(40)
     }
 
+    /** Rest areas and motorway services (OSM) within 300 m of [path] (points about 1 km apart). */
+    fun restAreas(path: List<GeoPoint>): List<Poi> {
+        if (path.size < 2) return emptyList()
+        val area = "(around:300," + path.joinToString(",") { "${"%.5f".format(java.util.Locale.US, it.lat)},${"%.5f".format(java.util.Locale.US, it.lon)}" } + ")"
+        val q = "[out:json][timeout:20];(node[\"highway\"~\"^(rest_area|services)$\"]$area;way[\"highway\"~\"^(rest_area|services)$\"]$area;);out center tags 80;"
+        val arr = query(q).optJSONArray("elements") ?: return emptyList()
+        val out = ArrayList<Poi>()
+        for (i in 0 until arr.length()) {
+            val e = arr.getJSONObject(i)
+            val point = point(e) ?: continue
+            val tags = e.optJSONObject("tags") ?: JSONObject()
+            val services = tags.optString("highway") == "services"
+            val name = tags.optString("name").ifBlank { if (services) "Raststätte" else "Rastplatz" }
+            out += Poi("${e.optString("type")}/${e.optLong("id")}", name, point, if (services) "Raststätte" else "Rastplatz")
+        }
+        return out.distinctBy { it.id }
+    }
+
     /** Traffic lights (highway=traffic_signals) inside [box]. */
     fun trafficSignals(box: BBox): List<GeoPoint> {
         val q = "[out:json][timeout:20];node[\"highway\"=\"traffic_signals\"](${box.minLat},${box.minLon},${box.maxLat},${box.maxLon});out skel;"

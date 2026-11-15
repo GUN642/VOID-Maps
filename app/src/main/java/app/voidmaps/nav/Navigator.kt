@@ -38,6 +38,9 @@ data class RouteHazard(val hazard: Hazard, val along: Double, val endAlong: Doub
 
 data class Warning(val hazard: Hazard, val distance: Double)
 
+/** A rest area or motorway service area beside the route, [along] metres from the start. */
+data class RouteRestArea(val name: String, val services: Boolean, val along: Double)
+
 /** A clearly faster route found in traffic, waiting for the driver to accept or decline it. */
 data class FasterRoute(val route: Route, val savedSeconds: Double, val offeredAt: Long)
 
@@ -71,6 +74,8 @@ data class NavState(
     val turnAround: Boolean = false,
     /** Signposted speed limit here, when the route knows it (TomTom). */
     val speedLimit: Int? = null,
+    /** Rest areas and service areas on our side of the route. */
+    val restAreas: List<RouteRestArea> = emptyList(),
 ) {
     val eta: Long get() = System.currentTimeMillis() + (remainingTime * 1000).toLong()
 }
@@ -100,6 +105,7 @@ object Navigator {
     private var fasterDeclinedUntil = 0L
     private var arrivedAt = 0L
     private var matchJob: Job? = null
+    private var restPois: List<app.voidmaps.data.Poi> = emptyList()
     private var wrongWaySince = 0L
     private var turnAroundSpoken = false
 
@@ -168,6 +174,7 @@ object Navigator {
 
     fun stop() {
         matchJob?.cancel()
+        restPois = emptyList()
         locationJob?.cancel()
         hazardJob?.cancel()
         locationJob = null
@@ -511,6 +518,7 @@ object Navigator {
             rerouting = false,
             faster = null,
             routeHazards = projectHazards(r, HazardRepo.incidents.value + if (settings.speedCameras) HazardRepo.cameras.value else emptyList()),
+            restAreas = projectRestAreas(r, restPois),
         )
         VoidMapsApp.scope.launch { refreshHazards() }
         alignToMap(r)
@@ -545,6 +553,7 @@ object Navigator {
             routeVersion = cur.routeVersion + 1,
             snap = null,
             routeHazards = projectHazards(new, HazardRepo.incidents.value + if (settings.speedCameras) HazardRepo.cameras.value else emptyList()),
+            restAreas = projectRestAreas(new, restPois),
             faster = cur.faster,
         )
         LocationTracker.location.value?.let { onLocation(it) }
@@ -583,6 +592,31 @@ object Navigator {
         val s = _state.value ?: return
         val st = settings
         val rest = s.snap?.let { s.route.line.remainder(it.segment, it.point) } ?: s.route.points
+        // Rest areas along the next ~60 km for the progress bar.
+        VoidMapsApp.scope.launch {
+            val path = withContext(Dispatchers.Default) {
+                val out = ArrayList<GeoPoint>()
+                var acc = 0.0
+                var since = Double.MAX_VALUE
+                for (k in rest.indices) {
+                    if (k > 0) {
+                        val d = Geo.distance(rest[k - 1], rest[k])
+                        acc += d
+                        since += d
+                    }
+                    if (since >= 1_000) {
+                        out += rest[k]
+                        since = 0.0
+                    }
+                    if (acc > 60_000) break
+                }
+                out
+            }
+            val found = withContext(Dispatchers.IO) { runCatching { app.voidmaps.data.Pois.restAreas(path) }.getOrNull() } ?: return@launch
+            restPois = (found + restPois).distinctBy { it.id }.takeLast(400)
+            val cur = _state.value ?: return@launch
+            _state.value = cur.copy(restAreas = projectRestAreas(cur.route, restPois))
+        }
         if (st.tomtomKey.isNotBlank()) {
             val boxes = withContext(Dispatchers.Default) { BBox.chunks(rest, 9_000.0, 500.0, limit = 20) }
             HazardRepo.loadIncidents(st.tomtomKey, boxes, replace = false)
@@ -609,6 +643,25 @@ object Navigator {
             if (st.speedCameras) HazardRepo.ensureCameras(cells, st.blitzerDe, st.mobileCameras)
             if (st.chargers) HazardRepo.ensureChargers(cells, st.chargerOperators)
         }
+    }
+
+    /** Rest areas within 350 m of the route, on the right-hand side (the one for our direction). */
+    private fun projectRestAreas(route: Route, pois: List<app.voidmaps.data.Poi>): List<RouteRestArea> {
+        val pts = route.points
+        val out = ArrayList<RouteRestArea>()
+        for (p in pois) {
+            val snap = route.line.snap(p.point) ?: continue
+            if (snap.offset > 350) continue
+            if (snap.offset > 40 && snap.segment + 1 < pts.size) {
+                val a = pts[snap.segment]
+                val b = pts[snap.segment + 1]
+                val k = kotlin.math.cos(Math.toRadians(a.lat))
+                val cross = (b.lon - a.lon) * k * (p.point.lat - a.lat) - (b.lat - a.lat) * (p.point.lon - a.lon) * k
+                if (cross > 0) continue // left of the driving direction: the other carriageway's
+            }
+            out += RouteRestArea(p.name, p.detail == "Raststätte", snap.along)
+        }
+        return out.distinctBy { (it.along / 300).toInt() }.sortedBy { it.along }
     }
 
     private fun projectHazards(route: Route, hazards: List<Hazard>): List<RouteHazard> {

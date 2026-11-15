@@ -110,6 +110,18 @@ class CarNavScreen(carContext: CarContext, private val renderer: CarMapRenderer)
                 }
         }
         lifecycleScope.launch {
+            // Turn instructions for the car's instrument cluster and head-up display.
+            Navigator.state.map { s ->
+                s?.let { listOf(it.next, it.distanceToNext.toInt() / 10, it.remainingTime.toInt() / 30, it.rerouting, it.routeVersion, it.turnAround, it.lanes) }
+            }
+                .distinctUntilChanged()
+                .collect {
+                    val s = Navigator.state.value ?: return@collect
+                    if (s.arrived) return@collect
+                    runCatching { navManager?.updateTrip(CarTrip.build(s)) }
+                }
+        }
+        lifecycleScope.launch {
             VoidMapsApp.settings.map { it.voiceMode to it.navView }.distinctUntilChanged().collect { invalidate() }
         }
         renderer.onFollowingChanged = { invalidate() }

@@ -1,5 +1,6 @@
 package app.voidmaps.ui
 
+import kotlin.math.roundToInt
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -448,21 +449,30 @@ private fun ArrivedBar(s: NavState, onStop: () -> Unit) {
 }
 
 @Composable
-private fun RouteProgressBar(s: NavState, settings: AppSettings, modifier: Modifier) {
+private fun RouteProgressBar(s: NavState, settings: AppSettings, modifier: Modifier, labelsLeft: Boolean = false) {
     val c = VoidTheme.colors
     val context = LocalContext.current
     val design = VoidTheme.design
     val palette = mapPalette(design)
     val icons = remember(design) { MapIcons.all(context, palette).mapValues { it.value.asImageBitmap() } }
     val along = s.snap?.along ?: 0.0
-    // The bar shows the next 30 km, or the rest of the route when that is shorter.
-    val horizon = s.remainingDistance.coerceIn(1_000.0, 30_000.0)
+    // The bar shows the next 50 km, or the rest of the route when that is shorter.
+    val horizon = s.remainingDistance.coerceIn(1_000.0, 50_000.0)
     val events = s.routeHazards.filter { e ->
         (settings.speedCameras || !e.hazard.type.isCamera) &&
             (e.endAlong ?: e.along) >= along - 10 && e.along - along <= horizon
     }
     val next = events.filter { it.along >= along - 10 }.minByOrNull { it.along }
     val stopsAhead = s.route.waypointAlong.filter { it > along && it - along <= horizon }
+    val restAhead = s.restAreas.filter { it.along > along && it.along - along <= horizon }
+    // Minutes to the next speed camera and the next rest area, shown beside their icons.
+    val nextCamera = events.firstOrNull { it.hazard.type.isCamera && it.along >= along - 10 }
+    val nextRest = restAhead.firstOrNull()
+    val nowLeft = s.route.remainingTime(along)
+    fun minutesTo(a: Double): String {
+        val min = ((nowLeft - s.route.remainingTime(a)) / 60.0).roundToInt().coerceAtLeast(1)
+        return if (min >= 60) "${min / 60}:${"%02d".format(min % 60)} H" else "$min MIN"
+    }
     BoxWithConstraints(modifier) {
         val dens = LocalDensity.current
         val h = constraints.maxHeight.toFloat()
@@ -505,6 +515,16 @@ private fun RouteProgressBar(s: NavState, settings: AppSettings, modifier: Modif
             }
         }
         val iconPx = with(dens) { 24.dp.roundToPx() }
+        restAhead.forEach { r ->
+            val yy = y(r.along - along)
+            Box(
+                Modifier.offset { IntOffset((cx - iconPx / 2f).toInt(), (yy - iconPx / 2f).toInt()) }.size(24.dp)
+                    .clip(RoundedCornerShape(6.dp)).background(Color(0xFF1F5FD6)).border(1.5.dp, Color.White, RoundedCornerShape(6.dp)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(if (r.services) "R" else "P", color = Color.White, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold, fontSize = 13.sp)
+            }
+        }
         events.forEach { e ->
             val bmp = icons[e.hazard.type.icon] ?: return@forEach
             val yy = y((e.along - along).coerceAtLeast(0.0))
@@ -512,6 +532,25 @@ private fun RouteProgressBar(s: NavState, settings: AppSettings, modifier: Modif
                 bmp, e.hazard.type.label,
                 Modifier.offset { IntOffset((cx - iconPx / 2f).toInt(), (yy - iconPx / 2f).toInt()) }.size(24.dp),
             )
+        }
+        // Minute labels beside the next camera and the next rest area.
+        val labelW = with(dens) { 64.dp.roundToPx() }
+        val labelH = with(dens) { 20.dp.roundToPx() }
+        val gap = with(dens) { 18.dp.roundToPx() }
+        fun labelX() = if (labelsLeft) (cx - gap - labelW).toInt() else (cx + gap).toInt()
+        listOfNotNull(nextCamera?.along, nextRest?.along).forEach { a ->
+            val yy = y((a - along).coerceAtLeast(0.0))
+            Box(
+                Modifier.offset { IntOffset(labelX(), (yy - labelH / 2f).toInt()) }.width(64.dp).height(20.dp),
+                contentAlignment = if (labelsLeft) Alignment.CenterEnd else Alignment.CenterStart,
+            ) {
+                Box(
+                    Modifier.clip(RoundedCornerShape(8.dp)).background(c.surface.copy(alpha = 0.92f))
+                        .border(1.dp, c.divider, RoundedCornerShape(8.dp)).padding(horizontal = 5.dp, vertical = 1.dp),
+                ) {
+                    Text(minutesTo(a), style = MaterialTheme.typography.labelSmall, color = c.text, maxLines = 1)
+                }
+            }
         }
         Text(
             Format.distance(horizon).uppercase(), style = MaterialTheme.typography.labelSmall, color = c.textMuted,
@@ -646,7 +685,7 @@ fun CarNavOverlay(s: NavState, settings: AppSettings) {
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             SpeedCluster(s.speedKmh, s.speedLimit)
-            RouteProgressBar(s, settings, Modifier.width(52.dp).fillMaxHeight())
+            RouteProgressBar(s, settings, Modifier.width(52.dp).fillMaxHeight(), labelsLeft = true)
         }
     }
 }

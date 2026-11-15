@@ -110,8 +110,11 @@ object LocationTracker {
         val now = System.currentTimeMillis()
         if (loc.provider == LocationManager.GPS_PROVIDER) {
             lastGpsAt = now
-        } else if (now - lastGpsAt < 5000 && (!loc.hasAccuracy() || loc.accuracy > 12f)) {
-            return // GPS is delivering – ignore coarser fixes (precise fused ones, e.g. from the car, are fine).
+        } else if (now - lastGpsAt < 3000) {
+            // GPS is delivering – ignore the other providers: two interleaved sources with slightly
+            // different positions and delays made the puck jitter. They only bridge the time until
+            // the first GPS fix and gaps without satellites (tunnels, garages).
+            return
         }
         val fixed = if (loc.hasBearing() && loc.speed > 1.5f) {
             lastBearing = loc.bearing

@@ -21,13 +21,13 @@ class PuckSmoother {
     private var fixTime = 0L
     private var line: Polyline? = null
     private var fixAlong = 0.0
-    private var alongCorrection = 0.0
     private var shownAlong: Double? = null
     private var shownBearing: Float? = null
     private var latCorrection = 0.0
     private var lonCorrection = 0.0
     private var shownPoint: GeoPoint? = null
     private var lastFrame = 0L
+    private var shownSpeed = 0.0
 
     /** Feed every GPS fix together with the current navigation state. */
     fun onFix(loc: Location, nav: NavState?) {
@@ -41,13 +41,11 @@ class PuckSmoother {
         if (onRoute) {
             val newLine = nav!!.route.line
             fixAlong = snap!!.along
-            // Keep moving on smoothly from where the puck is now (same route only).
-            alongCorrection = if (newLine === line && previousShownAlong != null) {
-                (previousShownAlong - fixAlong).takeIf { kotlin.math.abs(it) < 60 } ?: 0.0
-            } else {
-                0.0
+            // The puck keeps its own position and speed; frame() lets it follow the fix smoothly.
+            if (newLine !== line || previousShownAlong == null) {
+                shownAlong = null
+                shownSpeed = 0.0
             }
-            if (newLine !== line) shownAlong = null
             line = newLine
             latCorrection = 0.0
             lonCorrection = 0.0
@@ -71,6 +69,8 @@ class PuckSmoother {
     fun frame(): Location? {
         val f = fix ?: return null
         val now = System.currentTimeMillis()
+        val frameDt = if (lastFrame == 0L) 0.016 else ((now - lastFrame) / 1000.0).coerceIn(0.0, 0.25)
+        lastFrame = now
         val dt = ((now - fixTime) / 1000.0).coerceIn(0.0, 1.6)
         val speed = if (f.hasSpeed()) f.speed.toDouble() else 0.0
         val moving = speed > 0.8
@@ -79,7 +79,21 @@ class PuckSmoother {
         val point: GeoPoint
         var targetBearing: Float? = null
         if (l != null) {
-            val along = (fixAlong + (if (moving) speed * dt else 0.0) + alongCorrection * fade).coerceIn(0.0, l.length)
+            // Where the car should be now (last fix + speed × time) and how fast it goes. The puck follows
+            // with a critically damped spring: position and speed change continuously, so a new GPS fix
+            // never causes a visible jump or a sudden change of speed.
+            val target = (fixAlong + (if (moving) speed * dt else 0.0)).coerceIn(0.0, l.length)
+            val targetSpeed = if (moving) speed else 0.0
+            val prev = shownAlong
+            val along = if (prev == null || kotlin.math.abs(target - prev) > 80) {
+                shownSpeed = targetSpeed
+                target
+            } else {
+                val w = 2.6
+                val accel = w * w * (target - prev) + 2 * w * (targetSpeed - shownSpeed)
+                shownSpeed = (shownSpeed + accel * frameDt).coerceAtLeast(0.0)
+                (prev + shownSpeed * frameDt).coerceIn(0.0, l.length)
+            }
             shownAlong = along
             point = l.pointAt(along)
             if (moving) targetBearing = Geo.bearing(point, l.pointAt(along + 20)).toFloat()
@@ -92,9 +106,7 @@ class PuckSmoother {
             if (moving && f.hasBearing()) targetBearing = f.bearing
         }
         shownPoint = point
-        // Damped rotation, independent of the frame rate (20 Hz on the phone, every frame in the car).
-        val frameDt = if (lastFrame == 0L) 0.05 else ((now - lastFrame) / 1000.0).coerceIn(0.0, 0.5)
-        lastFrame = now
+        // Damped rotation, independent of the frame rate.
         val k = (1.0 - exp(-frameDt / 0.25)).toFloat()
         val current = shownBearing
         val bearing = when {
